@@ -1155,6 +1155,11 @@
       list.sort((a, b) => firstDate(a) - firstDate(b));
       for (let i = 0; i + 1 < list.length; i++) {
         const A = list[i], B = list[i + 1];
+        const lastDate = (d) => { const r = d.rows.slice().reverse().find((x) => x.date); return r ? r.date.y * 10000 + r.date.m * 100 + r.date.d : 0; };
+        if (firstDate(B) < lastDate(A)) {
+          out.push({ from: A.fileName, to: B.fileName, level: 'warn', ok: true, endA: null, startB: null, overlap: true, title: `${A.fileName} & ${B.fileName}: periodenya tumpang tindih`, detail: 'Kedua file mencakup tanggal yang sama. Mungkin file yang sama (atau periode yang sama) diunggah dua kali; hapus salah satunya agar transaksi tidak dobel di Excel.' });
+          continue;
+        }
         const endA = A.summary.closing != null ? A.summary.closing : A.totals.lastSaldo != null ? A.totals.lastSaldo : A.totals.closingCalc;
         const startB = B.summary.opening != null ? B.summary.opening : B.totals.opening;
         const ok = close(endA, startB);

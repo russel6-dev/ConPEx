@@ -182,7 +182,7 @@
       rs.getCell(`A${y}`).value = 'Kesinambungan antar file (saldo akhir → saldo awal berikutnya)'; rs.getCell(`A${y}`).font = { bold: true, size: 12, color: { argb: C.ink } }; y++;
       rs.getRow(y).values = ['Dari → Ke', 'Saldo akhir', 'Saldo awal berikutnya', 'Selisih', 'Status']; styleHeader(rs.getRow(y)); y++;
       const s0 = y;
-      for (const c of continuity) {
+      for (const c of continuity.filter((x) => !x.overlap)) {
         rs.getRow(y).values = [`${c.from} → ${c.to}`, c.endA, c.startB, f(`B${y}-C${y}`, round(c.endA - c.startB)), f(`IF(ABS(B${y}-C${y})<0.005,"COCOK","SELISIH")`, c.ok ? 'COCOK' : 'SELISIH')];
         ['B', 'C', 'D'].forEach((k) => (rs.getCell(`${k}${y}`).numFmt = NUM));
         y++;
