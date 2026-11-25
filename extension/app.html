@@ -63,6 +63,13 @@
             <option value="force">Paksa OCR semua halaman</option>
           </select>
         </div>
+        <div class="opt">
+          <label for="optInc">Analisis uang masuk</label>
+          <select id="optInc">
+            <option value="off">Tidak — hanya convert &amp; pengecekan</option>
+            <option value="on">Ya — tandai indikasi penghasilan</option>
+          </select>
+        </div>
         <div class="opt opt-btn">
           <button id="btnReprocess" class="btn ghost" type="button" hidden>Proses ulang dengan pilihan ini</button>
         </div>
@@ -111,6 +118,12 @@
             <li>Saldo akhir, kesinambungan antar halaman &amp; antar file (bulan).</li>
             <li>Buku besar: saldo per akun, baris Total per akun, debit = kredit.</li>
           </ul>
+          <h3 style="margin-top:14px">Analisis uang masuk (opsional)</h3>
+          <ul>
+            <li>Nyalakan di pilihan <b>Analisis uang masuk</b>. Setiap uang masuk ditandai: indikasi penghasilan usaha, bunga, bukan penghasilan, atau perlu dicek.</li>
+            <li>Kata lengkap, singkatan, dan typo dikenali. Ganti kategori lewat dropdown, lalu <b>jadikan aturan</b> agar berlaku untuk file berikutnya.</li>
+            <li>Excel mendapat sheet rekap bulanan (ekualisasi), rincian (pemeriksaan), dan ringkasan.</li>
+          </ul>
         </div>
         <div>
           <h3>Tips</h3>
@@ -130,6 +143,7 @@
   <script src="lib/tesseract/tesseract.min.js"></script>
   <script src="lib/exceljs.min.js"></script>
   <script src="engine.js"></script>
+  <script src="income.js"></script>
   <script src="excel.js"></script>
   <script src="app.js"></script>
 </body>

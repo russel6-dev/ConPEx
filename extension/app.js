@@ -2,6 +2,7 @@
 (() => {
   'use strict';
   const E = window.ConPExEngine;
+  const I = window.ConPExIncome;
   const X = window.ConPExExcel;
   const $ = (s, el = document) => el.querySelector(s);
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -20,17 +21,36 @@
   const optType = $('#optType'), optBank = $('#optBank'), optOcr = $('#optOcr');
   for (const b of E.BANKS) optBank.insertAdjacentHTML('beforeend', `<option value="${esc(b)}">${esc(b)}</option>`);
   optBank.insertAdjacentHTML('beforeend', '<option value="Lainnya">Bank lain (mode umum)</option>');
-  const opts = () => ({ docType: optType.value, bank: optBank.value, ocr: optOcr.value });
+  const optInc = $('#optInc');
+  const opts = () => ({ docType: optType.value, bank: optBank.value, ocr: optOcr.value, inc: optInc.value });
+  const incOn = () => optInc.value === 'on';
   try {
     const saved = JSON.parse(localStorage.getItem('conpex-opts') || '{}');
     if (saved.docType) optType.value = saved.docType;
     if (saved.bank) optBank.value = saved.bank;
     if (saved.ocr) optOcr.value = saved.ocr;
+    if (saved.inc) optInc.value = saved.inc;
   } catch (e) { /* abaikan */ }
   for (const el of [optType, optBank, optOcr]) el.addEventListener('change', () => {
     try { localStorage.setItem('conpex-opts', JSON.stringify(opts())); } catch (e) { /* abaikan */ }
     $('#btnReprocess').hidden = !state.items.length;
   });
+  // analisis uang masuk tidak perlu proses ulang PDF
+  optInc.addEventListener('change', () => {
+    try { localStorage.setItem('conpex-opts', JSON.stringify(opts())); } catch (e) { /* abaikan */ }
+    applyIncome();
+    if (doneDocs().length) { renderResults(); toast(incOn() ? 'Analisis uang masuk dinyalakan. Lihat kolom "Uang masuk" di tabel.' : 'Analisis uang masuk dimatikan. Excel hanya berisi hasil convert & pengecekan.'); }
+  });
+
+  // ------------------------------------------------------------------ aturan uang masuk (buatan pengguna)
+  const loadRules = () => { try { return JSON.parse(localStorage.getItem('conpex-rules') || '[]'); } catch (e) { return []; } };
+  const saveRules = (r) => { try { localStorage.setItem('conpex-rules', JSON.stringify(r)); } catch (e) { /* abaikan */ } };
+  let userRules = loadRules();
+  state.incFilter = '';
+  function applyIncome() {
+    if (!incOn()) return;
+    for (const d of doneDocs()) if (d.docType === 'bank') I.analyze(d, { userRules });
+  }
   $('#btnReprocess').addEventListener('click', () => {
     for (const it of state.items) if (it.status !== 'password') { it.status = 'wait'; it.doc = null; it.msg = ''; }
     $('#btnReprocess').hidden = true;
@@ -148,6 +168,7 @@
       while ((it = state.items.find((x) => x.status === 'wait'))) await processItem(it);
     } finally { state.running = false; }
     state.continuity = E.checkContinuity(doneDocs());
+    applyIncome();
     if (!state.active || !state.items.some((x) => x.id === state.active && x.doc)) {
       const first = state.items.find((x) => x.doc);
       state.active = first ? first.id : null;
@@ -370,6 +391,7 @@
           <ul class="checks" id="checkList">${doc.checks.map(checkLi).join('')}</ul>
         </div>
       </div>
+      ${incOn() && !isGL ? incomePanel(doc) : ''}
       <div>
         <div class="tbl-tools">
           <label><input type="checkbox" id="onlyIssues" ${state.onlyIssues ? 'checked' : ''}> Tampilkan hanya baris yang perlu dicek</label>
@@ -385,6 +407,36 @@
     const one = $('#btnXlsxOne');
     if (one) one.addEventListener('click', () => download([doc], []));
     $('#onlyIssues').addEventListener('change', (e) => { state.onlyIssues = e.target.checked; $('#tblWrap').innerHTML = tableHtml(doc); });
+  }
+
+  const CAT_KEYS = ['usaha', 'bunga', 'non', 'cek'];
+  function incomePanel(doc) {
+    const sum = I.summarize([doc]);
+    const total = CAT_KEYS.reduce((t, c) => t + sum.byCat[c].total, 0);
+    const chips = CAT_KEYS.map((c) => `<button type="button" class="chip cat-${c}${state.incFilter === c ? ' on' : ''}" data-a="incfilter" data-cat="${c}" aria-pressed="${state.incFilter === c}">
+        <span class="chip-name">${esc(I.CATS[c])}</span><b>${fmt(sum.byCat[c].total)}</b><span class="chip-sub">${sum.byCat[c].count} transaksi · ${total ? Math.round((sum.byCat[c].total / total) * 100) : 0}%</span></button>`).join('');
+    const rules = userRules.map((r, i) => `<li><span class="rule-text">"${esc(r.text)}"</span> → <span class="tagcat cat-${r.cat}">${esc(I.CATS[r.cat])}</span><button type="button" class="linkbtn" data-a="delrule" data-i="${i}" aria-label="Hapus aturan">hapus</button></li>`).join('');
+    return `<div class="panel inc-panel">
+      <div class="inc-head"><h3>Analisis uang masuk</h3><span class="muted small">Indikasi otomatis dari keterangan bank, bukan kesimpulan pajak. Klik kotak untuk menyaring tabel.${state.incFilter ? ' <button type="button" class="linkbtn" data-a="incfilter" data-cat="">Tampilkan semua</button>' : ''}</span></div>
+      <div class="chips">${chips}</div>
+      <details class="rules" id="rulesBox" ${state.rulesOpen ? 'open' : ''}>
+        <summary>Aturan Anda (${userRules.length}) — selalu menang atas deteksi otomatis</summary>
+        <form class="rule-form" id="ruleForm">
+          <label>Jika keterangan berisi<input id="ruleText" placeholder="mis. PT ABC, PINJAMAN DIREKTUR" autocomplete="off"></label>
+          <label>maka kategori<select id="ruleCat">${CAT_KEYS.map((c) => `<option value="${c}">${esc(I.CATS[c])}</option>`).join('')}</select></label>
+          <button class="btn small" type="submit">Tambah aturan</button>
+        </form>
+        ${userRules.length ? `<ul class="rule-list">${rules}</ul>` : '<p class="muted small">Belum ada aturan. Ganti kategori sebuah transaksi di tabel, lalu klik "＋ jadikan aturan".</p>'}
+      </details>
+    </div>`;
+  }
+
+  function incCell(r) {
+    if (!r.kredit || !r.inc) return '<td class="inc"></td>';
+    const opts = CAT_KEYS.map((c) => `<option value="${c}"${r.inc.cat === c ? ' selected' : ''}>${esc(I.CATS[c])}</option>`).join('');
+    return `<td class="inc" title="${esc(r.inc.reason)}"><select class="inc-sel cat-${r.inc.cat}" data-a="inc" aria-label="Kategori uang masuk">${opts}</select>
+      <span class="inc-why">${esc(r.inc.manual ? 'dipilih manual' : `${r.inc.jenis} · keyakinan ${r.inc.conf}`)}</span>
+      ${r.inc.manual ? '<button type="button" class="linkbtn" data-a="mkrule">＋ jadikan aturan</button>' : ''}</td>`;
   }
 
   const issue = (r) => r.status === 'err' || Object.keys(r.sus).length > 0;
@@ -409,30 +461,35 @@
       ${ed('kredit', fmt(r.kredit), 'n')}
       ${ed('saldo', fmt(r.saldo), 'n')}
       <td class="cek">${ckCell(r)}${notes}</td>
+      ${showInc(isGL) ? incCell(r) : ''}
       <td class="pg">${r.page}</td>
       <td class="row-act"><button type="button" data-a="swap" title="Tukar debit ↔ kredit" aria-label="Tukar debit dan kredit">⇄</button><button type="button" data-a="add" title="Sisipkan baris di bawah" aria-label="Sisipkan baris">＋</button><button type="button" data-a="del" title="Hapus baris" aria-label="Hapus baris">✕</button></td>
     </tr>`;
   }
 
+  const showInc = (isGL) => incOn() && !isGL;
   function tableHtml(doc) {
     const isGL = doc.docType === 'gl';
-    const head = `<thead><tr><th>#</th><th>Tanggal</th><th>${isGL ? 'No. Bukti' : 'Ref / Cabang'}</th><th>Keterangan</th><th class="n">Debit</th><th class="n">Kredit</th><th class="n">Saldo</th><th>Cek</th><th>Hal</th><th></th></tr></thead>`;
+    const inc = showInc(isGL);
+    const NC = inc ? 11 : 10;
+    const head = `<thead><tr><th>#</th><th>Tanggal</th><th>${isGL ? 'No. Bukti' : 'Ref / Cabang'}</th><th>Keterangan</th><th class="n">Debit</th><th class="n">Kredit</th><th class="n">Saldo</th><th>Cek</th>${inc ? '<th>Uang masuk</th>' : ''}<th>Hal</th><th></th></tr></thead>`;
     let body = '';
     let lastAcct = undefined;
-    const show = (r) => !state.onlyIssues || issue(r);
+    const show = (r) => (!state.onlyIssues || issue(r)) && (!inc || !state.incFilter || (r.kredit && r.inc && r.inc.cat === state.incFilter));
     const T = doc.totals || {};
-    if (!isGL && T.opening != null) body += `<tr class="open"><td></td><td></td><td></td><td>SALDO AWAL${T.openingDerived ? ' (dihitung mundur)' : ''}</td><td></td><td></td><td class="n">${fmt(T.opening)}</td><td></td><td></td><td></td></tr>`;
+    if (!isGL && T.opening != null) body += `<tr class="open"><td></td><td></td><td></td><td>SALDO AWAL${T.openingDerived ? ' (dihitung mundur)' : ''}</td><td></td><td></td><td class="n">${fmt(T.opening)}</td><td></td>${inc ? '<td></td>' : ''}<td></td><td></td></tr>`;
     doc.rows.forEach((r, i) => {
       if (isGL && r.acct !== lastAcct) {
         lastAcct = r.acct;
         const a = r.acct || {};
         const res = a.result || {};
-        body += `<tr class="acct"><td colspan="10">${esc(a.code || '')} ${esc(a.name || '')}<span class="acct-meta">saldo normal ${a.normal === 'K' ? 'kredit' : 'debit'} · saldo awal ${fmt(a.openingUsed)} · saldo akhir hitung ${fmt(res.closingCalc)}${res.issues && res.issues.length ? ' · ✕ ' + esc(res.issues.join('; ')) : ''}</span></td></tr>`;
+        body += `<tr class="acct"><td colspan="${NC}">${esc(a.code || '')} ${esc(a.name || '')}<span class="acct-meta">saldo normal ${a.normal === 'K' ? 'kredit' : 'debit'} · saldo awal ${fmt(a.openingUsed)} · saldo akhir hitung ${fmt(res.closingCalc)}${res.issues && res.issues.length ? ' · ✕ ' + esc(res.issues.join('; ')) : ''}</span></td></tr>`;
       }
       if (show(r)) body += rowHtml(r, i, isGL);
     });
-    if (!doc.rows.length) body = `<tr><td colspan="10" class="empty">Tidak ada transaksi yang terbaca. Coba pilih jenis dokumen/bank secara manual atau "Paksa OCR", lalu klik "Proses ulang".</td></tr>`;
-    const foot = `<tfoot><tr><td></td><td></td><td></td><td>TOTAL</td><td class="n">${fmt(T.sumD)}</td><td class="n">${fmt(T.sumK)}</td><td class="n">${isGL ? '' : fmt(T.lastSaldo)}</td><td colspan="3"></td></tr></tfoot>`;
+    if (doc.rows.length && !doc.rows.some(show)) body += `<tr><td colspan="${NC}" class="empty">Tidak ada transaksi yang cocok dengan saringan ini.</td></tr>`;
+    if (!doc.rows.length) body = `<tr><td colspan="${NC}" class="empty">Tidak ada transaksi yang terbaca. Coba pilih jenis dokumen/bank secara manual atau "Paksa OCR", lalu klik "Proses ulang".</td></tr>`;
+    const foot = `<tfoot><tr><td></td><td></td><td></td><td>TOTAL</td><td class="n">${fmt(T.sumD)}</td><td class="n">${fmt(T.sumK)}</td><td class="n">${isGL ? '' : fmt(T.lastSaldo)}</td><td colspan="${NC - 7}"></td></tr></tfoot>`;
     return `<table class="tx">${head}<tbody>${body}</tbody>${foot}</table>`;
   }
 
@@ -475,7 +532,64 @@
     afterEdit(doc, false);
   });
 
+  docView.addEventListener('change', (e) => {
+    const sel = e.target.closest('select.inc-sel');
+    if (!sel) return;
+    const doc = activeDoc();
+    const r = doc.rows.find((x) => x.id === +sel.closest('tr').dataset.id);
+    if (!r) return;
+    const cat = sel.value;
+    r.inc = { cat, label: I.CATS[cat], jenis: 'Dipilih manual', conf: 'tinggi', reason: 'dipilih manual', party: r.inc && r.inc.party, manual: true };
+    rerenderKeepScroll();
+    toast('Kategori diganti. Klik "＋ jadikan aturan" agar transaksi serupa ikut berubah.');
+  });
+  docView.addEventListener('submit', (e) => {
+    if (e.target.id !== 'ruleForm') return;
+    e.preventDefault();
+    const text = $('#ruleText').value.trim();
+    if (text.length < 2) { toast('Tulis kata/nama yang ada di keterangan, minimal 2 huruf.'); return; }
+    const cat = $('#ruleCat').value;
+    const before = new Map();
+    for (const d of doneDocs()) for (const x of d.rows) if (x.inc) before.set(x.id, x.inc.cat);
+    userRules = userRules.filter((r) => I.norm(r.text) !== I.norm(text)).concat([{ text, cat }]);
+    saveRules(userRules);
+    // baris yang dipilih manual & cocok dengan aturan baru ikut mengikuti aturan
+    for (const d of doneDocs()) for (const x of d.rows) if (x.inc && x.inc.manual && (' ' + I.norm(x.desc) + ' ').includes(' ' + I.norm(text) + ' ')) delete x.inc;
+    applyIncome();
+    let changed = 0;
+    for (const d of doneDocs()) for (const x of d.rows) if (x.inc && before.get(x.id) !== x.inc.cat) changed++;
+    state.rulesOpen = true;
+    rerenderKeepScroll();
+    toast(`Aturan "${text}" ditambahkan${changed ? ` — ${changed} transaksi ikut berubah` : ''}. Aturan disimpan untuk file berikutnya.`);
+  });
+  function rerenderKeepScroll() {
+    const wrap = $('#tblWrap'); const st = wrap ? wrap.scrollTop : 0; const y = window.scrollY;
+    renderDoc(); const w2 = $('#tblWrap'); if (w2) w2.scrollTop = st; window.scrollTo(0, y);
+  }
+
   docView.addEventListener('click', (e) => {
+    const act = e.target.closest('[data-a="incfilter"], [data-a="mkrule"], [data-a="delrule"]');
+    if (act) {
+      const a = act.dataset.a;
+      if (a === 'incfilter') { state.incFilter = state.incFilter === act.dataset.cat ? '' : act.dataset.cat; rerenderKeepScroll(); return; }
+      if (a === 'delrule') {
+        const i = +act.dataset.i; const removed = userRules[i];
+        userRules.splice(i, 1); saveRules(userRules);
+        applyIncome(); state.rulesOpen = true; rerenderKeepScroll();
+        toast(`Aturan "${removed.text}" dihapus.`); return;
+      }
+      if (a === 'mkrule') {
+        const doc = activeDoc();
+        const r = doc.rows.find((x) => x.id === +act.closest('tr').dataset.id);
+        state.rulesOpen = true; rerenderKeepScroll();
+        const guess = I.keyPhrase(r.desc);
+        $('#ruleText').value = guess; $('#ruleCat').value = r.inc.cat;
+        $('#rulesBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        $('#ruleText').focus(); $('#ruleText').select();
+        toast('Periksa kata kuncinya (boleh diubah), lalu klik "Tambah aturan".');
+        return;
+      }
+    }
     const chk = e.target.closest('.check.link');
     if (chk) { jumpTo(chk.dataset.rows.split(',').map(Number)); return; }
     const sug = e.target.closest('button.suggest');
@@ -508,10 +622,13 @@
 
   function afterEdit(doc, full) {
     E.check(doc);
+    applyIncome();
     state.continuity = E.checkContinuity(doneDocs());
     renderBanner(); renderContinuity(); renderTabs(); renderFiles();
     if (full) { const wrap = $('#tblWrap'); const st = wrap.scrollTop; renderDoc(); $('#tblWrap').scrollTop = st; return; }
     $('#checkList').innerHTML = doc.checks.map(checkLi).join('');
+    const ip = $('.inc-panel');
+    if (ip && incOn() && doc.docType === 'bank') { ip.outerHTML = incomePanel(doc); }
     // perbarui kolom cek & warna baris tanpa render ulang (agar fokus sel tidak hilang)
     for (const r of doc.rows) {
       const tr = $(`#tblWrap tr[data-id="${r.id}"]`);
@@ -544,7 +661,7 @@
   // ------------------------------------------------------------------ unduh Excel
   async function download(docs, continuity) {
     try {
-      const buf = await X.build(docs, continuity);
+      const buf = await X.build(docs, continuity, { income: incOn() });
       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const d = docs[0];
       const parts = ['ConPEx', d.docType === 'gl' ? 'BukuBesar' : d.bank, d.meta.accountNo, docs.length > 1 ? `${docs.length}file` : d.meta.period].filter(Boolean);

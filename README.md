@@ -24,19 +24,37 @@ Extension Chrome/Edge yang mengubah **PDF rekening koran** dan **buku besar (gen
 
 **Khusus hasil scan:** angka yang formatnya janggal ditandai kuning. Bila OCR salah membaca tanda `+`/`-` sebagai angka (mis. `+974.600,50` terbaca `1974.600,50`) dan hanya ada satu koreksi yang membuat saldo cocok, angka dikoreksi otomatis dan tetap ditandai kuning beserta catatannya.
 
+## Analisis uang masuk (opsional)
+
+Nyalakan lewat pilihan **Analisis uang masuk → Ya — tandai indikasi penghasilan**. Setiap uang masuk (kredit) diberi kategori, alasan, dan tingkat keyakinan:
+
+| Kategori | Contoh yang dikenali |
+|---|---|
+| Indikasi penghasilan usaha | transfer masuk dari pihak lain, setoran tunai, QRIS/EDC, virtual account, marketplace, INV/PELUNASAN/TERMIN |
+| Penghasilan bunga / bagi hasil | BUNGA, JASA GIRO, BAGI HASIL, DIVIDEN |
+| Bukan penghasilan | refund/retur/reversal/koreksi, pencairan pinjaman, setoran modal, pemindahbukuan/rekening sendiri (termasuk nama pengirim = nama pemilik rekening), pencairan deposito |
+| Perlu dicek | tidak ada petunjuk, atau petunjuk ambigu seperti "KAS" |
+
+- Kata lengkap, **singkatan** (TRF, PNGMBLN, RVSL, JS GIRO, PB DARI, dll.), dan **typo / salah baca OCR** (mis. "RETUN" → RETUR) dikenali. Hasil dari singkatan bermakna ganda atau typo diberi keyakinan lebih rendah.
+- Kategori bisa diganti lewat dropdown. Klik **＋ jadikan aturan** agar transaksi serupa ikut berubah. Aturan disimpan di browser dan dipakai untuk file berikutnya.
+- Ini **indikasi otomatis, bukan kesimpulan pajak**.
+
 ## Isi file Excel
 
 | Sheet | Isi |
 |---|---|
+| **Hasil Convert** | Murni hasil convert (tanggal, keterangan, debit, kredit, saldo) tanpa kolom tambahan. |
 | **Transaksi** / **Buku Besar** | Tanggal (format tanggal asli), keterangan, debit, kredit, saldo (angka asli, bisa dijumlah), lalu kolom **Saldo Hitung, Selisih, Status** berupa **rumus Excel**. Baris bermasalah otomatis merah. Ada filter dan header yang dibekukan. |
 | **Rekonsiliasi** / **Ringkasan Akun** | Perbandingan "Menurut PDF" dan "Hasil Hitung" (rumus SUM/COUNTIF) dengan status COCOK/SELISIH, plus catatan pemeriksaan. |
+
+| **Uang Masuk - Bulanan / Rincian / Ringkasan** | Hanya bila analisis uang masuk dinyalakan: rekap per bulan untuk ekualisasi (dengan kolom peredaran bruto SPT/PPN untuk diisi), rincian per transaksi untuk pemeriksaan (kolom penjelasan & dokumen pendukung), dan ringkasan per kategori & pengirim terbesar. Semua memakai SUMIFS ke kolom kategori di sheet Transaksi. |
 
 Karena pengecekannya berupa rumus, bila angka di Excel diubah, status cek ikut berubah.
 
 ## Cara instal
 
 ### A. Dari file ZIP (untuk dibagikan ke teman)
-1. Unduh `ConPEx-v1.0.5.zip` dari halaman **Releases** repo ini, lalu ekstrak.
+1. Unduh `ConPEx-v1.1.0.zip` dari halaman **Releases** repo ini, lalu ekstrak.
 2. Buka `chrome://extensions` (Edge: `edge://extensions`).
 3. Nyalakan **Developer mode** (pojok kanan atas).
 4. Klik **Load unpacked**, lalu pilih folder hasil ekstrak (yang berisi `manifest.json`).
@@ -76,11 +94,14 @@ extension/            ← isi extension (dimuat apa adanya oleh Chrome)
   app.html/.css/.js   ← halaman konverter
   engine.js           ← mesin baca & cek (tanpa DOM, bisa dites di Node)
   excel.js            ← pembuat .xlsx (ExcelJS) dengan rumus cek
+  income.js           ← analisis uang masuk (indikasi penghasilan)
   lib/                ← pdf.js 3.11.174, Tesseract.js 5.1.1 (+ data ind/eng), ExcelJS 4.4.0
 test/
   make_samples.py     ← buat contoh PDF fiktif (BCA, BRI, Mandiri, BNI, buku besar)
   make_scans.py       ← buat versi "hasil scan" dari contoh
   run.js / ocr.js     ← uji mesin (PDF digital / OCR)
+  income.js           ← uji klasifikasi uang masuk & tebakan pengirim
+  e2e_income.js       ← uji fitur analisis uang masuk di extension
   excel.js            ← buat Excel dari contoh
   e2e.js / e2e_ui.js  ← uji extension di Chromium (Playwright)
 scripts/build-zip.sh  ← buat dist/ConPEx-vX.Y.Z.zip

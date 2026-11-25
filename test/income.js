@@ -49,5 +49,6 @@ const parties = [
   ['QRIS SETTLEMENT MERCHANT 8812', ''], ['KR OTOMATIS PT ANUGERAH', 'PT ANUGERAH'],
 ];
 for (const [d, exp] of parties) { const g = I.guessParty(d); const ok = g === exp; if (!ok) fail++; console.log(`${ok ? 'OK  ' : 'FAIL'} pihak: ${d.slice(0, 50).padEnd(50)} → "${g}"`); }
+for (const [d, exp] of [['MCM InhouseTrf KAS', 'KAS'], ['TRSF E-BANKING CR PT MAJU JAYA', 'PT MAJU JAYA'], ['PINJAMAN DIREKTUR 0912', 'DIREKTUR']]) { const g = I.keyPhrase(d); const ok = g === exp; if (!ok) fail++; console.log(`${ok ? 'OK  ' : 'FAIL'} kata kunci: ${d} → "${g}"`); }
 console.log(fail ? `${fail} gagal` : 'semua lolos');
 process.exit(fail ? 1 : 0);

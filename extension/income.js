@@ -254,6 +254,20 @@
     return best.slice(0, 4).join(' ');
   }
 
+  // kata umum transfer/bank yang tidak khas (jangan dipakai sebagai kata kunci aturan)
+  const GENERIC = new Set([...STOP]);
+  for (const r of RULES) if (r.jenis === 'Transfer masuk dari pihak lain') for (const t of [...r.terms, ...r.abbr, ...r.weak]) for (const w of norm(t).split(' ')) GENERIC.add(w);
+  ['CS', 'INHOUSETRF', 'TRF', 'TRSF', 'MCM', 'KR', 'CR', 'DB'].forEach((w) => GENERIC.add(w));
+
+  /** Usulan kata kunci aturan dari keterangan: bagian yang khas (nama pihak, atau kata selain istilah transfer umum). */
+  function keyPhrase(desc) {
+    const party = guessParty(desc);
+    if (party) return party;
+    const cleaned = String(desc || '').split(/\s+/).filter((t) => !/\d/.test(t)).join(' ');
+    const toks = norm(cleaned).split(' ').filter((t) => /^[A-Z]{2,}$/.test(t) && !GENERIC.has(t));
+    return toks.slice(0, 3).join(' ');
+  }
+
   /** Analisis semua uang masuk di dokumen rekening koran. Menambah r.inc pada baris kredit. */
   function analyze(doc, opts = {}) {
     const owner = opts.ownerName != null ? opts.ownerName : (doc.meta && doc.meta.name) || '';
@@ -289,5 +303,5 @@
     };
   }
 
-  return { CATS, CAT_ORDER, RULES, classify, analyze, summarize, guessParty, norm, _editDistance: editDistance };
+  return { CATS, CAT_ORDER, RULES, classify, analyze, summarize, guessParty, keyPhrase, norm, _editDistance: editDistance };
 });

@@ -66,7 +66,7 @@
 
   // ------------------------------------------------------------ rekening koran
 
-  function bankSheets(wb, docs, continuity) {
+  function bankSheets(wb, docs, continuity, opts = {}) {
     const ws = wb.addWorksheet('Transaksi', { views: [{ state: 'frozen', ySplit: 6 }] });
     const multi = docs.length > 1;
     const d0 = docs[0];
@@ -82,7 +82,7 @@
     ];
     if (multi) cols.push(['File', 26]);
     // kolom analisis uang masuk (bila sudah dianalisis)
-    const withInc = docs.some((d) => d.rows.some((x) => x.inc));
+    const withInc = opts.income !== false && docs.some((d) => d.rows.some((x) => x.inc));
     const INC = {};
     if (withInc) {
       for (const [key, name, w] of [['kat', 'Kategori uang masuk', 27], ['jenis', 'Jenis', 30], ['conf', 'Keyakinan', 11], ['alasan', 'Alasan', 46], ['pihak', 'Pihak (perkiraan)', 24], ['bulan', 'Bulan', 9]]) {
@@ -422,14 +422,50 @@
   function round(v) { return Math.round(v * 100) / 100; }
 
   /** docs: hasil ConPExEngine.parse (sudah dicek). Return ArrayBuffer .xlsx */
-  async function build(docs, continuity) {
+  /** Sheet pertama: murni hasil convert, tanpa kolom cek/analisis. */
+  function plainSheet(wb, docs) {
+    const banks = docs.filter((d) => d.docType === 'bank');
+    const gls = docs.filter((d) => d.docType === 'gl');
+    const multi = docs.length > 1;
+    const ws = wb.addWorksheet('Hasil Convert', { views: [{ state: 'frozen', ySplit: 1 }] });
+    const hasRef = docs.some((d) => d.rows.some((x) => x.ref));
+    let cols;
+    if (gls.length && !banks.length) {
+      cols = [['No. Akun', 11, (x) => x.account || ''], ['Nama Akun', 24, (x) => x.accountName || (x.acct && x.acct.name) || ''], ['Tanggal', 12, (x) => toDate(x.date)], ['No. Bukti', 14, (x) => x.ref || ''],
+        ['Keterangan', 46, (x) => x.desc], ['Debit', 17, (x) => x.debit], ['Kredit', 17, (x) => x.kredit], ['Saldo', 18, (x) => x.saldo]];
+    } else {
+      cols = [['Tanggal', 12, (x) => toDate(x.date)], ['Keterangan', 52, (x) => x.desc], ...(hasRef ? [['Ref / Cabang', 14, (x) => x.ref || '']] : []),
+        ['Debit', 17, (x) => x.debit], ['Kredit', 17, (x) => x.kredit], ['Saldo', 18, (x) => x.saldo]];
+      if (gls.length) cols.unshift(['No. Akun', 11, (x) => x.account || '']);
+    }
+    if (multi) cols.push(['File', 26, null]);
+    cols.forEach(([, w], i) => (ws.getColumn(i + 1).width = w));
+    ws.getRow(1).values = cols.map((c) => c[0]);
+    styleHeader(ws.getRow(1));
+    let r = 2;
+    for (const d of docs) for (const x of d.rows) {
+      ws.getRow(r).values = cols.map(([, , fn]) => (fn ? fn(x) : d.fileName));
+      r++;
+    }
+    cols.forEach(([name], i) => {
+      const c = ws.getColumn(i + 1);
+      if (/^(Debit|Kredit|Saldo)$/.test(name)) c.numFmt = NUM;
+      if (name === 'Tanggal') c.numFmt = DATE;
+      if (name === 'Keterangan') c.alignment = { wrapText: true, vertical: 'top' };
+    });
+    if (r > 2) ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: r - 1, column: cols.length } };
+  }
+
+  /** opts: {income: true|false} — sertakan analisis uang masuk bila datanya ada. */
+  async function build(docs, continuity, opts = {}) {
     const wb = new ExcelJS.Workbook();
     wb.creator = 'ConPEx';
     wb.created = new Date();
     wb.calcProperties = { fullCalcOnLoad: true };
     const banks = docs.filter((d) => d.docType === 'bank');
     const gls = docs.filter((d) => d.docType === 'gl');
-    if (banks.length) bankSheets(wb, banks, continuity);
+    plainSheet(wb, docs);
+    if (banks.length) bankSheets(wb, banks, continuity, opts);
     if (gls.length) glSheets(wb, gls);
     return wb.xlsx.writeBuffer();
   }

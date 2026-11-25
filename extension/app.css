@@ -18,6 +18,10 @@
   --err-soft: #fde4e1;
   --info: #2c5d8f;
   --info-soft: #e3edf8;
+  --c-usaha: #1e7a45; --c-usaha-soft: #e1f3e7;
+  --c-bunga: #2c5d8f; --c-bunga-soft: #e3edf8;
+  --c-non: #5b6d70; --c-non-soft: #eceff0;
+  --c-cek: #8a5a00; --c-cek-soft: #fff1c4;
   --shadow: 0 1px 2px rgba(21, 41, 46, .06), 0 4px 16px rgba(21, 41, 46, .05);
   --sans: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
   --num: "Cascadia Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
@@ -29,6 +33,8 @@
     --accent: #5fb3a9; --accent-ink: #0b1a1a; --accent-soft: #1d3633;
     --ok: #5fd08e; --ok-soft: #173326; --warn: #f2c14e; --warn-soft: #3a3115; --err: #ff8a7d; --err-soft: #3d1f1c;
     --info: #8dbbef; --info-soft: #1b2a3d; --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+    --c-usaha: #5fd08e; --c-usaha-soft: #173326; --c-bunga: #8dbbef; --c-bunga-soft: #1b2a3d;
+    --c-non: #a9b8ba; --c-non-soft: #242f32; --c-cek: #f2c14e; --c-cek-soft: #3a3115;
     color-scheme: dark;
   }
 }
@@ -196,3 +202,31 @@ table.tx { border-collapse: separate; border-spacing: 0; width: 100%; font-size:
 .tech code { display: block; margin-top: 4px; padding: 6px 8px; background: var(--surface-2); border-radius: 6px; overflow-wrap: anywhere; white-space: pre-wrap; }
 .suggest { display: block; margin-top: 4px; border: 1px solid var(--accent); background: var(--surface); color: var(--accent); border-radius: 6px; font-size: 11.5px; font-weight: 600; padding: 2px 8px; cursor: pointer; white-space: nowrap; }
 .suggest:hover { background: var(--accent-soft); }
+
+/* analisis uang masuk */
+.inc-panel { display: grid; gap: 12px; }
+.inc-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.inc-head h3 { margin: 0; }
+.chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 10px; }
+.chip { display: grid; gap: 2px; text-align: left; padding: 10px 12px; border-radius: 10px; border: 1px solid transparent; cursor: pointer; font: inherit; }
+.chip b { font-family: var(--num); font-size: 15px; font-variant-numeric: tabular-nums; }
+.chip-name { font-size: 12.5px; font-weight: 600; }
+.chip-sub { font-size: 12px; opacity: .85; }
+.chip.on { outline: 2px solid currentColor; outline-offset: 1px; }
+.cat-usaha { background: var(--c-usaha-soft); color: var(--c-usaha); }
+.cat-bunga { background: var(--c-bunga-soft); color: var(--c-bunga); }
+.cat-non { background: var(--c-non-soft); color: var(--c-non); }
+.cat-cek { background: var(--c-cek-soft); color: var(--c-cek); }
+.tx td.inc { min-width: 190px; }
+.inc-sel { width: 100%; padding: 4px 6px; border-radius: 6px; border: 1px solid currentColor; font-size: 12.5px; font-weight: 600; }
+.inc-sel option { background: var(--surface); color: var(--ink); }
+.inc-why { display: block; font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+.linkbtn { border: 0; background: none; padding: 0; margin-left: 4px; color: var(--accent); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: underline; }
+.rules summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.rule-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin: 10px 0; }
+.rule-form label { display: grid; gap: 3px; font-size: 12px; font-weight: 600; color: var(--muted); flex: 1 1 200px; }
+.rule-form input { padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.rule-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.rule-list li { font-size: 13px; }
+.rule-text { font-weight: 600; }
+.tagcat { padding: 1px 7px; border-radius: 5px; font-size: 12px; font-weight: 600; }
