@@ -1,0 +1,21 @@
+CARA PASANG ConPEx (PDF rekening koran & buku besar -> Excel)
+=============================================================
+
+JANGAN klik dua kali app.html. ConPEx harus dipasang sebagai extension:
+
+1. Ekstrak ZIP ini ke folder permanen, misalnya Documents\ConPEx
+   (jangan dihapus/dipindah setelah dipasang).
+2. Buka Chrome, ketik di address bar:  chrome://extensions
+   (Microsoft Edge: edge://extensions)
+3. Nyalakan "Developer mode" di pojok kanan atas.
+4. Klik "Load unpacked", lalu pilih FOLDER hasil ekstrak
+   (folder yang berisi file manifest.json).
+5. Klik ikon puzzle di toolbar Chrome, pin "ConPEx".
+6. Klik ikon ConPEx -> seret PDF ke kotak unggah -> Unduh Excel.
+
+Halaman yang benar alamatnya diawali chrome-extension://
+
+Update ke versi baru: timpa isi folder dengan ZIP baru, lalu klik
+tombol reload di kartu ConPEx pada chrome://extensions.
+
+Semua proses berjalan offline di komputer Anda. PDF tidak dikirim ke mana pun.

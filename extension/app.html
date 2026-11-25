@@ -25,6 +25,16 @@
   </header>
 
   <main>
+    <section id="fileWarn" class="warnbox" hidden>
+      <h2>Halaman ini dibuka dengan cara yang salah</h2>
+      <p>File <b>app.html</b> dibuka langsung (klik dua kali), jadi Chrome memblokir mesin OCR dan sebagian fitur. ConPEx harus dipasang sebagai <b>extension</b> lalu dibuka dari ikonnya:</p>
+      <ol>
+        <li>Buka alamat <code>chrome://extensions</code> di Chrome (Edge: <code>edge://extensions</code>).</li>
+        <li>Nyalakan <b>Developer mode</b> di pojok kanan atas.</li>
+        <li>Klik <b>Load unpacked</b>, lalu pilih <b>folder</b> tempat file ini berada (yang berisi <code>manifest.json</code>).</li>
+        <li>Klik ikon puzzle di toolbar, pin <b>ConPEx</b>, lalu klik ikonnya. Halaman yang benar beralamat <code>chrome-extension://…</code></li>
+      </ol>
+    </section>
     <section class="intake">
       <label id="drop" class="drop" for="fileInput" tabindex="0">
         <input id="fileInput" type="file" accept="application/pdf,.pdf" multiple hidden>

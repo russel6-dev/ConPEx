@@ -10,6 +10,8 @@
   const extUrl = (p) => (window.chrome && chrome.runtime && chrome.runtime.getURL ? chrome.runtime.getURL(p) : new URL(p, location.href).href);
 
   pdfjsLib.GlobalWorkerOptions.workerSrc = extUrl('lib/pdf.worker.min.js');
+  // dibuka langsung dari folder (file://) dan bukan sebagai extension: OCR tidak bisa jalan
+  if (location.protocol === 'file:') { $('#fileWarn').hidden = false; }
 
   const state = { items: [], active: null, continuity: [], onlyIssues: false, running: false };
   let seq = 1, newRowId = 1e7;
@@ -40,7 +42,7 @@
   function toast(msg) {
     const t = $('#toast');
     t.textContent = msg; t.hidden = false;
-    clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), 3200);
+    clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), Math.max(3200, msg.length * 60));
   }
 
   // ------------------------------------------------------------------ unggah
@@ -53,7 +55,7 @@
 
   async function addFiles(list) {
     const files = Array.from(list || []).filter((f) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name));
-    if (!files.length) { toast('Pilih file PDF.'); return; }
+    if (!files.length) { toast('File yang dipilih bukan PDF. ConPEx hanya bisa membaca file berakhiran .pdf.'); return; }
     for (const f of files) state.items.push({ id: seq++, name: f.name, data: await f.arrayBuffer(), status: 'wait', msg: '', progress: 0, doc: null });
     renderFiles();
     run();
@@ -66,7 +68,7 @@
   }
 
   $('#btnClear').addEventListener('click', () => {
-    if (state.running) { toast('Tunggu proses selesai dulu.'); return; }
+    if (state.running) { toast('Masih memproses PDF. Tunggu sampai selesai, lalu coba lagi.'); return; }
     state.items = []; state.active = null; state.continuity = [];
     renderFiles(); renderResults();
   });
@@ -87,6 +89,7 @@
         }
         const res = await fetch(src, { credentials: 'include' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
+        if (!/pdf/i.test(res.headers.get('content-type') || 'pdf')) throw new Error('bukan PDF');
         const buf = await res.arrayBuffer();
         const name = decodeURIComponent(u.pathname.split('/').pop() || 'dokumen.pdf');
         $('#srcCard').hidden = true;
@@ -94,7 +97,7 @@
       } catch (e) {
         help.textContent = src.startsWith('file:')
           ? 'File lokal tidak bisa dibaca langsung. Seret file PDF-nya ke kotak di atas, atau aktifkan "Izinkan akses ke URL file" untuk ConPEx di chrome://extensions.'
-          : `PDF tidak bisa diambil (${e.message}). Unduh PDF-nya lalu seret ke kotak di atas.`;
+          : 'PDF dari tab ini tidak bisa diambil otomatis (biasanya karena sesi login bank sudah habis). Unduh PDF-nya dulu (tombol unduh di viewer PDF), lalu seret file-nya ke kotak di atas.';
         help.hidden = false;
       }
     });
@@ -175,9 +178,12 @@
         const words = E.wordsFromTextItems(items);
         const digitWords = words.filter((w) => /\d/.test(w.t)).length;
         if (o.ocr === 'force' || digitWords < 6) {
+          if (location.protocol === 'file:') throw new Friendly(`Halaman ${p} adalah hasil scan, dan scan hanya bisa dibaca bila ConPEx dipasang sebagai extension.`, 'Jangan klik dua kali app.html. Ikuti petunjuk merah di atas halaman ini.');
           ocrCount++;
           it.msg = `OCR (scan) halaman ${p} dari ${n}${ocrCount === 1 ? ' — pertama kali butuh beberapa detik' : ''}`; renderFiles();
-          const r = await ocrPage(page, (pr) => { it.progress = (p - 1 + pr) / n; renderFilesSoon(); });
+          let r;
+          try { r = await ocrPage(page, (pr) => { it.progress = (p - 1 + pr) / n; renderFilesSoon(); }); }
+          catch (err) { const f = friendlyError(err, 'ocr'); throw new Friendly(f.title, f.hint, err); }
           pages.push({ page: p, words: r.words, width: r.width, ocr: true });
         } else {
           pages.push({ page: p, words, width: vp.width, height: vp.height, ocr: false });
@@ -185,16 +191,19 @@
         page.cleanup();
       }
       pdf.destroy();
-      it.doc = E.parse(pages, { fileName: it.name, docType: o.docType, bank: o.bank });
+      try { it.doc = E.parse(pages, { fileName: it.name, docType: o.docType, bank: o.bank }); }
+      catch (err) { const f = friendlyError(err, 'parse'); throw new Friendly(f.title, f.hint, err); }
       it.status = 'done'; it.progress = 1;
       it.msg = `${n} halaman · ${it.doc.rows.length} transaksi${ocrCount ? ` · ${ocrCount} halaman OCR` : ''}`;
     } catch (e) {
       if (e && e.name === 'PasswordException') {
         it.status = 'password';
-        it.msg = e.code === 2 ? 'Password salah, coba lagi.' : 'PDF ini dikunci password (biasanya e-statement bank).';
+        it.msg = e.code === 2 ? 'Password salah. Coba ketik ulang (perhatikan huruf besar/kecil).' : 'PDF ini dikunci password. Biasanya e-statement bank memakai password seperti tanggal lahir (mis. 01011990). Ketik di bawah lalu klik Buka.';
       } else {
         it.status = 'error';
-        it.msg = 'Gagal membaca PDF: ' + ((e && e.message) || e);
+        const f = friendlyError(e);
+        it.msg = f.title; it.hint = f.hint; it.tech = f.tech;
+        if (location.protocol === 'file:') $('#fileWarn').scrollIntoView({ behavior: 'smooth' });
         console.error(e);
       }
     }
@@ -202,6 +211,32 @@
   }
 
   const doneDocs = () => state.items.filter((x) => x.doc).map((x) => x.doc);
+
+  /** Error yang sudah berbahasa sederhana (judul + saran). */
+  class Friendly extends Error {
+    constructor(title, hint, cause) { super(title); this.title = title; this.hint = hint; this.cause = cause; }
+  }
+
+  /** Ubah error teknis menjadi {title, hint, tech} yang mudah dimengerti. */
+  function friendlyError(e, stage) {
+    if (e instanceof Friendly) return { title: e.title, hint: e.hint, tech: e.cause ? String(e.cause.message || e.cause) : '' };
+    const tech = `${(e && e.name) || 'Error'}: ${(e && e.message) || e}`;
+    const m = String((e && e.message) || e).toLowerCase();
+    const name = (e && e.name) || '';
+    if (location.protocol === 'file:' && (/worker|origin 'null'|file:\/\//.test(m)))
+      return { title: 'ConPEx belum dipasang sebagai extension.', hint: 'Jangan klik dua kali app.html. Ikuti petunjuk merah di atas halaman ini.', tech };
+    if (name === 'InvalidPDFException' || /invalid pdf|bad xref|not a pdf/.test(m))
+      return { title: 'File ini bukan PDF yang bisa dibaca, atau filenya rusak.', hint: 'Coba unduh ulang PDF-nya dari internet banking / sumber aslinya, lalu proses lagi.', tech };
+    if (name === 'MissingPDFException' || /empty|zero/.test(m) && /pdf|file/.test(m))
+      return { title: 'File PDF-nya kosong.', hint: 'Unduh ulang PDF-nya, lalu coba lagi.', tech };
+    if (name === 'RangeError' || /out of memory|allocation|memory/.test(m))
+      return { title: 'PDF ini terlalu besar untuk diproses sekaligus.', hint: 'Tutup tab lain lalu coba lagi, atau pecah PDF-nya (mis. per bulan).', tech };
+    if (stage === 'ocr' || /tesseract|wasm|traineddata|createworker/.test(m))
+      return { title: 'Mesin pembaca scan (OCR) gagal berjalan.', hint: 'Muat ulang halaman ini (tekan F5) lalu coba lagi. Jika tetap gagal, pasang ulang ConPEx dari ZIP terbaru.', tech };
+    if (stage === 'parse')
+      return { title: 'PDF berhasil dibuka, tapi isinya gagal disusun jadi tabel.', hint: 'Coba pilih "Jenis dokumen" dan "Bank" secara manual lalu klik "Proses ulang". Jika tetap gagal, kirim info nama bank & jenis dokumennya ke pembuat ConPEx.', tech };
+    return { title: 'Terjadi kendala saat membaca PDF ini.', hint: 'Coba proses ulang. Jika tetap gagal, kirim "Detail teknis" di bawah ke pembuat ConPEx.', tech };
+  }
 
   // ------------------------------------------------------------------ daftar file
   function renderFiles() {
@@ -215,7 +250,9 @@
       const cls = { wait: 'wait', busy: 'busy', password: 'warn', ok: 'ok', warn: 'warn', error: 'error' }[st] || 'wait';
       const pillText = it.status === 'done' && st === 'error' ? 'Ada selisih' : label;
       return `<li class="file" data-id="${it.id}">
-        <div><div class="file-name" title="${esc(it.name)}">${esc(it.name)}</div><div class="file-msg">${esc(it.msg)}</div></div>
+        <div><div class="file-name" title="${esc(it.name)}">${esc(it.name)}</div><div class="file-msg${it.status === 'error' ? ' bad' : ''}">${esc(it.msg)}</div>
+          ${it.status === 'error' && it.hint ? `<div class="file-hint"><b>Yang bisa dilakukan:</b> ${esc(it.hint)}</div>` : ''}
+          ${it.status === 'error' && it.tech ? `<details class="tech"><summary>Detail teknis</summary><code>${esc(it.tech)}</code></details>` : ''}</div>
         <span class="pill ${cls}">${esc(pillText)}</span>
         ${it.status === 'busy' ? `<div class="bar"><i style="width:${Math.round(it.progress * 100)}%"></i></div>` : ''}
         ${it.status === 'password' ? `<form class="pw" data-id="${it.id}"><input type="password" id="pw-${it.id}" placeholder="Password PDF" autocomplete="off" aria-label="Password PDF ${esc(it.name)}"><button class="btn small" type="submit">Buka</button></form>` : ''}
@@ -417,14 +454,14 @@
       if (!text) r.date = null;
       else {
         const d = E.parseDateText(text, r.date && r.date.y);
-        if (!d) { toast('Format tanggal tidak dikenali. Contoh: 05/11/2025'); td.textContent = old; return; }
+        if (!d) { toast('Tanggal tidak dikenali. Tulis seperti 05/11/2025.'); td.textContent = old; return; }
         r.date = d;
       }
     } else if (f === 'debit' || f === 'kredit' || f === 'saldo') {
       if (!text) r[f] = null;
       else {
         const p = E.parseAmount(text.replace(/\s/g, ''));
-        if (!p) { toast('Angka tidak valid. Contoh: 1.250.000,00'); td.textContent = old; return; }
+        if (!p) { toast('Angka tidak dikenali. Tulis seperti 1.250.000,00 (tanpa huruf).'); td.textContent = old; return; }
         r[f] = f === 'saldo' ? p.value : Math.abs(p.value) || null;
       }
       delete r.sus[f]; delete r.sus.side;
@@ -504,7 +541,7 @@
       toast(`Excel disimpan: ${name}`);
     } catch (e) {
       console.error(e);
-      toast('Gagal membuat Excel: ' + e.message);
+      toast('Excel gagal dibuat. Coba klik "Unduh Excel" sekali lagi; jika tetap gagal, muat ulang halaman (F5) lalu proses ulang PDF-nya.');
     }
   }
 
