@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ConPEx — PDF ke Excel</title>
+  <link rel="icon" href="icons/icon32.png">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="top">
+    <div class="top-in">
+      <div class="brand">
+        <img src="icons/icon48.png" alt="" width="32" height="32">
+        <div>
+          <div class="brand-name">ConPEx</div>
+          <div class="brand-sub">Rekening koran &amp; buku besar → Excel</div>
+        </div>
+      </div>
+      <div class="privacy" title="File tidak pernah dikirim ke internet. Semua proses (termasuk OCR) berjalan di komputer ini.">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 1 1 6 0v3H9Z"/></svg>
+        Diproses offline di komputer Anda
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="intake">
+      <label id="drop" class="drop" for="fileInput" tabindex="0">
+        <input id="fileInput" type="file" accept="application/pdf,.pdf" multiple hidden>
+        <svg class="drop-ico" viewBox="0 0 48 48" width="44" height="44" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M28 5H13a3 3 0 0 0-3 3v32a3 3 0 0 0 3 3h22a3 3 0 0 0 3-3V15L28 5Zm0 0v10h10M24 22v12m-5-5 5 5 5-5"/></svg>
+        <span class="drop-title">Seret PDF ke sini, atau klik untuk memilih</span>
+        <span class="drop-sub">Bisa beberapa file sekaligus (mis. mutasi 12 bulan). PDF digital maupun hasil scan.</span>
+      </label>
+
+      <div class="opts">
+        <div class="opt">
+          <label for="optType">Jenis dokumen</label>
+          <select id="optType">
+            <option value="auto">Deteksi otomatis</option>
+            <option value="bank">Rekening koran / mutasi bank</option>
+            <option value="gl">Buku besar (general ledger)</option>
+          </select>
+        </div>
+        <div class="opt">
+          <label for="optBank">Bank</label>
+          <select id="optBank"><option value="auto">Deteksi otomatis</option></select>
+        </div>
+        <div class="opt">
+          <label for="optOcr">Cara baca</label>
+          <select id="optOcr">
+            <option value="auto">Otomatis (OCR untuk halaman scan)</option>
+            <option value="force">Paksa OCR semua halaman</option>
+          </select>
+        </div>
+        <div class="opt opt-btn">
+          <button id="btnReprocess" class="btn ghost" type="button" hidden>Proses ulang dengan pilihan ini</button>
+        </div>
+      </div>
+
+      <div id="srcCard" class="src" hidden>
+        <div class="src-text">
+          <strong>PDF dari tab:</strong> <span id="srcUrl"></span>
+        </div>
+        <button id="btnSrc" class="btn" type="button">Ambil &amp; proses PDF ini</button>
+        <p id="srcHelp" class="muted small" hidden></p>
+      </div>
+    </section>
+
+    <section id="filesSec" hidden>
+      <div class="sec-head">
+        <h2>File</h2>
+        <button id="btnClear" class="btn ghost small" type="button">Hapus semua</button>
+      </div>
+      <ul id="fileList" class="files"></ul>
+    </section>
+
+    <section id="results" hidden>
+      <div id="banner" class="banner"></div>
+      <div id="contin" class="contin" hidden></div>
+      <nav id="tabs" class="tabs" aria-label="Pilih file"></nav>
+      <div id="docView"></div>
+    </section>
+
+    <section class="help" id="help">
+      <div class="help-grid">
+        <div>
+          <h3>Cara pakai</h3>
+          <ol>
+            <li>Seret PDF rekening koran atau buku besar ke kotak di atas.</li>
+            <li>Lihat hasil pengecekan. Baris <span class="tag err">merah</span> saldonya tidak cocok, sel <span class="tag sus">kuning</span> perlu dicek manual.</li>
+            <li>Klik sel tabel untuk memperbaiki angka. Pengecekan langsung dihitung ulang.</li>
+            <li>Klik <b>Unduh Excel</b>. Excel berisi rumus cek dan sheet Rekonsiliasi.</li>
+          </ol>
+        </div>
+        <div>
+          <h3>Yang dicek otomatis</h3>
+          <ul>
+            <li>Saldo per baris: saldo sebelumnya + kredit − debit = saldo tercetak.</li>
+            <li>Total debit, total kredit &amp; jumlah transaksi vs ringkasan bank.</li>
+            <li>Saldo akhir, kesinambungan antar halaman &amp; antar file (bulan).</li>
+            <li>Buku besar: saldo per akun, baris Total per akun, debit = kredit.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Tips</h3>
+          <ul>
+            <li>PDF berpassword (e-statement): masukkan password saat diminta.</li>
+            <li>Scan sebaiknya lurus &amp; jelas (minimal 200 dpi).</li>
+            <li>Bank: BCA, Mandiri, BRI, BNI, BSI, CIMB, Permata, Danamon, BTN, dll. Format lain dibaca dengan mode umum.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="lib/pdf.min.js"></script>
+  <script src="lib/tesseract/tesseract.min.js"></script>
+  <script src="lib/exceljs.min.js"></script>
+  <script src="engine.js"></script>
+  <script src="excel.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

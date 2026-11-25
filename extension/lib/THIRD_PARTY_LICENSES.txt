@@ -1,0 +1,10 @@
+ConPEx menyertakan library open-source berikut (tidak diubah):
+
+- PDF.js 3.11.174 (pdf.min.js, pdf.worker.min.js) — Mozilla Foundation — Apache License 2.0
+  https://github.com/mozilla/pdf.js
+- Tesseract.js 5.1.1 & tesseract.js-core 5.1.1 — Apache License 2.0
+  https://github.com/naptha/tesseract.js
+- Data bahasa Tesseract (eng, ind; tessdata 4.0.0 best_int) — Apache License 2.0
+  https://github.com/tesseract-ocr/tessdata_best
+- ExcelJS 4.4.0 (exceljs.min.js) — MIT License
+  https://github.com/exceljs/exceljs

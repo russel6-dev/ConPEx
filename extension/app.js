@@ -1,0 +1,513 @@
+/* ConPEx — halaman konverter (UI). Logika baca & cek ada di engine.js, Excel di excel.js. */
+(() => {
+  'use strict';
+  const E = window.ConPExEngine;
+  const X = window.ConPExExcel;
+  const $ = (s, el = document) => el.querySelector(s);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmt = (v) => (v == null || v === '' ? '' : Number(v).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  const fmtDate = (d) => (d ? `${String(d.d).padStart(2, '0')}/${String(d.m).padStart(2, '0')}/${d.y}` : '');
+  const extUrl = (p) => (window.chrome && chrome.runtime && chrome.runtime.getURL ? chrome.runtime.getURL(p) : new URL(p, location.href).href);
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = extUrl('lib/pdf.worker.min.js');
+
+  const state = { items: [], active: null, continuity: [], onlyIssues: false, running: false };
+  let seq = 1, newRowId = 1e7;
+
+  // ------------------------------------------------------------------ opsi
+  const optType = $('#optType'), optBank = $('#optBank'), optOcr = $('#optOcr');
+  for (const b of E.BANKS) optBank.insertAdjacentHTML('beforeend', `<option value="${esc(b)}">${esc(b)}</option>`);
+  optBank.insertAdjacentHTML('beforeend', '<option value="Lainnya">Bank lain (mode umum)</option>');
+  const opts = () => ({ docType: optType.value, bank: optBank.value, ocr: optOcr.value });
+  try {
+    const saved = JSON.parse(localStorage.getItem('conpex-opts') || '{}');
+    if (saved.docType) optType.value = saved.docType;
+    if (saved.bank) optBank.value = saved.bank;
+    if (saved.ocr) optOcr.value = saved.ocr;
+  } catch (e) { /* abaikan */ }
+  for (const el of [optType, optBank, optOcr]) el.addEventListener('change', () => {
+    try { localStorage.setItem('conpex-opts', JSON.stringify(opts())); } catch (e) { /* abaikan */ }
+    $('#btnReprocess').hidden = !state.items.length;
+  });
+  $('#btnReprocess').addEventListener('click', () => {
+    for (const it of state.items) if (it.status !== 'password') { it.status = 'wait'; it.doc = null; it.msg = ''; }
+    $('#btnReprocess').hidden = true;
+    run();
+  });
+
+  // ------------------------------------------------------------------ toast
+  let toastT = null;
+  function toast(msg) {
+    const t = $('#toast');
+    t.textContent = msg; t.hidden = false;
+    clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), 3200);
+  }
+
+  // ------------------------------------------------------------------ unggah
+  const drop = $('#drop'), input = $('#fileInput');
+  input.addEventListener('change', () => { addFiles(input.files); input.value = ''; });
+  drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
+  ['dragenter', 'dragover'].forEach((ev) => document.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach((ev) => document.addEventListener(ev, (e) => { e.preventDefault(); if (ev === 'drop' || e.target === document.documentElement) drop.classList.remove('over'); }));
+  document.addEventListener('drop', (e) => { if (e.dataTransfer && e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
+
+  async function addFiles(list) {
+    const files = Array.from(list || []).filter((f) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name));
+    if (!files.length) { toast('Pilih file PDF.'); return; }
+    for (const f of files) state.items.push({ id: seq++, name: f.name, data: await f.arrayBuffer(), status: 'wait', msg: '', progress: 0, doc: null });
+    renderFiles();
+    run();
+  }
+
+  function addBuffer(name, buf) {
+    state.items.push({ id: seq++, name, data: buf, status: 'wait', msg: '', progress: 0, doc: null });
+    renderFiles();
+    run();
+  }
+
+  $('#btnClear').addEventListener('click', () => {
+    if (state.running) { toast('Tunggu proses selesai dulu.'); return; }
+    state.items = []; state.active = null; state.continuity = [];
+    renderFiles(); renderResults();
+  });
+
+  // ------------------------------------------------------------------ PDF dari tab
+  const src = new URLSearchParams(location.search).get('src');
+  if (src) {
+    $('#srcCard').hidden = false;
+    $('#srcUrl').textContent = src;
+    $('#btnSrc').addEventListener('click', async () => {
+      const help = $('#srcHelp');
+      help.hidden = true;
+      try {
+        const u = new URL(src);
+        if (u.protocol !== 'file:' && chrome.permissions) {
+          const ok = await chrome.permissions.request({ origins: [u.origin + '/*'] });
+          if (!ok) { help.textContent = 'Izin tidak diberikan. Anda tetap bisa mengunduh PDF-nya lalu menyeretnya ke kotak di atas.'; help.hidden = false; return; }
+        }
+        const res = await fetch(src, { credentials: 'include' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const buf = await res.arrayBuffer();
+        const name = decodeURIComponent(u.pathname.split('/').pop() || 'dokumen.pdf');
+        $('#srcCard').hidden = true;
+        addBuffer(name, buf);
+      } catch (e) {
+        help.textContent = src.startsWith('file:')
+          ? 'File lokal tidak bisa dibaca langsung. Seret file PDF-nya ke kotak di atas, atau aktifkan "Izinkan akses ke URL file" untuk ConPEx di chrome://extensions.'
+          : `PDF tidak bisa diambil (${e.message}). Unduh PDF-nya lalu seret ke kotak di atas.`;
+        help.hidden = false;
+      }
+    });
+  }
+
+  // ------------------------------------------------------------------ OCR
+  let ocrWorkerP = null, ocrProgress = null;
+  function getOcr() {
+    if (!ocrWorkerP) {
+      ocrWorkerP = (async () => {
+        const w = await Tesseract.createWorker(['ind', 'eng'], 1, {
+          workerPath: extUrl('lib/tesseract/worker.min.js'),
+          corePath: extUrl('lib/tesseract/core'),
+          langPath: extUrl('lib/tesseract/lang'),
+          workerBlobURL: false, gzip: true, cacheMethod: 'none',
+          logger: (m) => { if (m.status === 'recognizing text' && ocrProgress) ocrProgress(m.progress); },
+        });
+        await w.setParameters({ tessedit_pageseg_mode: '6', preserve_interword_spaces: '1' });
+        return w;
+      })();
+      ocrWorkerP.catch(() => { ocrWorkerP = null; });
+    }
+    return ocrWorkerP;
+  }
+
+  async function ocrPage(page, onProg) {
+    const worker = await getOcr();
+    const vp1 = page.getViewport({ scale: 1 });
+    const scale = Math.min(3.2, Math.max(1.6, 2400 / vp1.width));
+    const vp = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    ocrProgress = onProg;
+    const { data } = await worker.recognize(canvas);
+    ocrProgress = null;
+    return { words: E.wordsFromOcr(data.words || []), width: canvas.width };
+  }
+
+  // ------------------------------------------------------------------ proses
+  async function run() {
+    if (state.running) return;
+    state.running = true;
+    try {
+      let it;
+      while ((it = state.items.find((x) => x.status === 'wait'))) await processItem(it);
+    } finally { state.running = false; }
+    state.continuity = E.checkContinuity(doneDocs());
+    if (!state.active || !state.items.some((x) => x.id === state.active && x.doc)) {
+      const first = state.items.find((x) => x.doc);
+      state.active = first ? first.id : null;
+    }
+    renderFiles();
+    renderResults();
+  }
+
+  let renderT = 0;
+  const renderFilesSoon = () => { const now = Date.now(); if (now - renderT > 150) { renderT = now; renderFiles(); } };
+
+  async function processItem(it) {
+    const o = opts();
+    it.status = 'busy'; it.msg = 'Membuka PDF…'; it.progress = 0; renderFiles();
+    try {
+      const pdf = await pdfjsLib.getDocument({ data: it.data.slice(0), password: it.password || undefined, isEvalSupported: false }).promise;
+      const n = pdf.numPages, pages = [];
+      let ocrCount = 0;
+      for (let p = 1; p <= n; p++) {
+        it.msg = `Membaca halaman ${p} dari ${n}`; it.progress = (p - 1) / n; renderFilesSoon();
+        const page = await pdf.getPage(p);
+        const vp = page.getViewport({ scale: 1 });
+        const tc = await page.getTextContent();
+        const items = tc.items.map((x) => {
+          const tx = pdfjsLib.Util.transform(vp.transform, x.transform);
+          return { str: x.str, x: tx[4], y: tx[5], w: x.width, h: Math.hypot(tx[2], tx[3]) };
+        });
+        const words = E.wordsFromTextItems(items);
+        const digitWords = words.filter((w) => /\d/.test(w.t)).length;
+        if (o.ocr === 'force' || digitWords < 6) {
+          ocrCount++;
+          it.msg = `OCR (scan) halaman ${p} dari ${n}${ocrCount === 1 ? ' — pertama kali butuh beberapa detik' : ''}`; renderFiles();
+          const r = await ocrPage(page, (pr) => { it.progress = (p - 1 + pr) / n; renderFilesSoon(); });
+          pages.push({ page: p, words: r.words, width: r.width, ocr: true });
+        } else {
+          pages.push({ page: p, words, width: vp.width, height: vp.height, ocr: false });
+        }
+        page.cleanup();
+      }
+      pdf.destroy();
+      it.doc = E.parse(pages, { fileName: it.name, docType: o.docType, bank: o.bank });
+      it.status = 'done'; it.progress = 1;
+      it.msg = `${n} halaman · ${it.doc.rows.length} transaksi${ocrCount ? ` · ${ocrCount} halaman OCR` : ''}`;
+    } catch (e) {
+      if (e && e.name === 'PasswordException') {
+        it.status = 'password';
+        it.msg = e.code === 2 ? 'Password salah, coba lagi.' : 'PDF ini dikunci password (biasanya e-statement bank).';
+      } else {
+        it.status = 'error';
+        it.msg = 'Gagal membaca PDF: ' + ((e && e.message) || e);
+        console.error(e);
+      }
+    }
+    renderFiles();
+  }
+
+  const doneDocs = () => state.items.filter((x) => x.doc).map((x) => x.doc);
+
+  // ------------------------------------------------------------------ daftar file
+  function renderFiles() {
+    $('#filesSec').hidden = !state.items.length;
+    drop.classList.toggle('compact', state.items.length > 0);
+    $('.drop-title').textContent = state.items.length ? 'Tambah PDF lain (seret atau klik)' : 'Seret PDF ke sini, atau klik untuk memilih';
+    const ul = $('#fileList');
+    ul.innerHTML = state.items.map((it) => {
+      const st = it.status === 'done' ? it.doc.status : it.status;
+      const label = { wait: 'Menunggu', busy: 'Diproses', password: 'Butuh password', error: 'Gagal', ok: 'Cocok', warn: 'Perlu dicek', }[st] || (st === 'error' ? 'Ada selisih' : st);
+      const cls = { wait: 'wait', busy: 'busy', password: 'warn', ok: 'ok', warn: 'warn', error: 'error' }[st] || 'wait';
+      const pillText = it.status === 'done' && st === 'error' ? 'Ada selisih' : label;
+      return `<li class="file" data-id="${it.id}">
+        <div><div class="file-name" title="${esc(it.name)}">${esc(it.name)}</div><div class="file-msg">${esc(it.msg)}</div></div>
+        <span class="pill ${cls}">${esc(pillText)}</span>
+        ${it.status === 'busy' ? `<div class="bar"><i style="width:${Math.round(it.progress * 100)}%"></i></div>` : ''}
+        ${it.status === 'password' ? `<form class="pw" data-id="${it.id}"><input type="password" id="pw-${it.id}" placeholder="Password PDF" autocomplete="off" aria-label="Password PDF ${esc(it.name)}"><button class="btn small" type="submit">Buka</button></form>` : ''}
+      </li>`;
+    }).join('');
+  }
+  $('#fileList').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const id = +e.target.dataset.id;
+    const it = state.items.find((x) => x.id === id);
+    if (!it) return;
+    it.password = $(`#pw-${id}`).value;
+    it.status = 'wait';
+    run();
+  });
+
+  // ------------------------------------------------------------------ hasil
+  function overall() {
+    const docs = doneDocs();
+    const levels = docs.map((d) => d.status).concat(state.continuity.map((c) => c.level));
+    return levels.includes('error') ? 'error' : levels.includes('warn') ? 'warn' : 'ok';
+  }
+
+  function renderResults() {
+    const docs = doneDocs();
+    $('#results').hidden = !docs.length;
+    if (!docs.length) return;
+    renderBanner();
+    renderContinuity();
+    renderTabs();
+    renderDoc();
+  }
+
+  function renderBanner() {
+    const docs = doneDocs();
+    const st = overall();
+    const tx = docs.reduce((s, d) => s + d.rows.length, 0);
+    const sumD = docs.reduce((s, d) => s + (d.totals.sumD || 0), 0);
+    const sumK = docs.reduce((s, d) => s + (d.totals.sumK || 0), 0);
+    const nErr = docs.reduce((s, d) => s + d.rows.filter((r) => r.status === 'err').length, 0);
+    const nSus = docs.reduce((s, d) => s + d.rows.filter((r) => Object.keys(r.sus).length).length, 0);
+    const title = st === 'ok' ? 'Semua angka cocok' : st === 'warn' ? `Angka cocok, ${nSus} baris perlu dicek manual` : `Ada selisih${nErr ? ` di ${nErr} baris` : ''}. Periksa tanda merah.`;
+    const b = $('#banner');
+    b.className = 'banner ' + st;
+    b.innerHTML = `
+      <div class="mark" aria-hidden="true">${st === 'ok' ? '✓' : st === 'warn' ? '!' : '✕'}</div>
+      <div>
+        <div class="banner-title">${esc(title)}</div>
+        <div class="stats">
+          <span>${docs.length} file</span>
+          <span>Transaksi <b>${tx.toLocaleString('id-ID')}</b></span>
+          <span>Total debit <b>${fmt(sumD)}</b></span>
+          <span>Total kredit <b>${fmt(sumK)}</b></span>
+        </div>
+      </div>
+      <div class="banner-actions">
+        <button id="btnXlsx" class="btn big" type="button">Unduh Excel${docs.length > 1 ? ' (semua file)' : ''}</button>
+        <span class="muted small">Berisi rumus cek &amp; sheet ${docs.some((d) => d.docType === 'gl') ? 'Ringkasan Akun' : 'Rekonsiliasi'}</span>
+      </div>`;
+    $('#btnXlsx').addEventListener('click', () => download(docs, state.continuity));
+  }
+
+  function renderContinuity() {
+    const el = $('#contin');
+    el.hidden = !state.continuity.length;
+    el.innerHTML = state.continuity.length ? `<ul class="checks">${state.continuity.map(checkLi).join('')}</ul>` : '';
+  }
+
+  function renderTabs() {
+    const items = state.items.filter((x) => x.doc);
+    const nav = $('#tabs');
+    nav.hidden = items.length < 2;
+    nav.innerHTML = items.map((it) => `<button class="tab" type="button" role="tab" data-id="${it.id}" aria-selected="${it.id === state.active}"><i class="dot ${it.doc.status}"></i><span class="t">${esc(it.name)}</span></button>`).join('');
+  }
+  $('#tabs').addEventListener('click', (e) => {
+    const t = e.target.closest('.tab');
+    if (!t) return;
+    state.active = +t.dataset.id;
+    renderTabs(); renderDoc();
+  });
+
+  const activeDoc = () => { const it = state.items.find((x) => x.id === state.active); return it && it.doc; };
+
+  function checkLi(c) {
+    const ic = { ok: '✓', error: '✕', warn: '!', info: 'i' }[c.level];
+    return `<li class="check ${c.level}${c.rows && c.rows.length ? ' link' : ''}" ${c.rows && c.rows.length ? `data-rows="${c.rows.join(',')}" tabindex="0" role="button"` : ''}>
+      <span class="ic" aria-hidden="true">${ic}</span>
+      <div><div class="check-title">${esc(c.title)}</div><div class="check-detail">${esc(c.detail)}</div></div></li>`;
+  }
+
+  function renderDoc() {
+    const doc = activeDoc();
+    const v = $('#docView');
+    if (!doc) { v.innerHTML = ''; return; }
+    const isGL = doc.docType === 'gl';
+    v.innerHTML = `<div class="doc">
+      <div class="doc-top">
+        <div class="panel">
+          <h3>${isGL ? 'Buku besar' : 'Rekening koran'}</h3>
+          <div class="meta">
+            ${isGL ? '' : `<label>Bank<input id="m-bank" value="${esc(doc.bank)}"></label>`}
+            ${isGL ? '' : `<label>No. rekening<input id="m-accountNo" value="${esc(doc.meta.accountNo)}"></label>`}
+            <label>${isGL ? 'Perusahaan / nama' : 'Nama'}<input id="m-name" value="${esc(doc.meta.name)}"></label>
+            <label>Periode<input id="m-period" value="${esc(doc.meta.period)}"></label>
+          </div>
+          <div class="doc-actions">
+            <span class="muted small">Jenis terdeteksi: <b>${isGL ? 'Buku besar' : 'Rekening koran'}</b> · ${doc.pageCount} halaman${doc.ocrPages ? ` (${doc.ocrPages} OCR)` : ''}</span>
+            ${doneDocs().length > 1 ? '<button id="btnXlsxOne" class="btn ghost small" type="button">Unduh Excel file ini saja</button>' : ''}
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Hasil pengecekan</h3>
+          <ul class="checks" id="checkList">${doc.checks.map(checkLi).join('')}</ul>
+        </div>
+      </div>
+      <div>
+        <div class="tbl-tools">
+          <label><input type="checkbox" id="onlyIssues" ${state.onlyIssues ? 'checked' : ''}> Tampilkan hanya baris yang perlu dicek</label>
+          <span class="muted small">Klik sel untuk mengedit · ⇄ tukar debit/kredit · ＋ sisip baris · ✕ hapus baris</span>
+        </div>
+        <div class="tbl-wrap" id="tblWrap">${tableHtml(doc)}</div>
+      </div>
+    </div>`;
+    for (const k of ['bank', 'accountNo', 'name', 'period']) {
+      const el = $('#m-' + k);
+      if (el) el.addEventListener('input', () => { if (k === 'bank') doc.bank = el.value; else doc.meta[k] = el.value; });
+    }
+    const one = $('#btnXlsxOne');
+    if (one) one.addEventListener('click', () => download([doc], []));
+    $('#onlyIssues').addEventListener('change', (e) => { state.onlyIssues = e.target.checked; $('#tblWrap').innerHTML = tableHtml(doc); });
+  }
+
+  const issue = (r) => r.status === 'err' || Object.keys(r.sus).length > 0;
+
+  function ckCell(r) {
+    if (r.status === 'err') return `<span class="ck err" title="Saldo seharusnya ${fmt(r.calc)}">Selisih ${fmt(r.diff)}</span>`;
+    if (r.status === 'ok' && r.saldo != null) return '<span class="ck ok">✓ cocok</span>';
+    return '<span class="ck na">–</span>';
+  }
+
+  function rowHtml(r, i, isGL) {
+    const sus = (f) => (r.sus[f] || (f !== 'saldo' && r.sus.side && ((f === 'debit' && r.debit) || (f === 'kredit' && r.kredit))) ? ' sus' : '');
+    const ed = (field, val, cls) => `<td class="${cls}${sus(field)}" contenteditable="plaintext-only" spellcheck="false" data-f="${field}">${esc(val)}</td>`;
+    const notes = r.notes && r.notes.length ? `<span class="note">${esc(r.notes.join(' · '))}</span>` : '';
+    return `<tr data-id="${r.id}" class="${r.status === 'err' ? 'err' : ''}">
+      <td class="idx">${i + 1}</td>
+      ${ed('date', fmtDate(r.date), 'c-date')}
+      ${ed('ref', r.ref, '')}
+      <td class="desc" contenteditable="plaintext-only" spellcheck="false" data-f="desc">${esc(r.desc)}</td>
+      ${ed('debit', fmt(r.debit), 'n')}
+      ${ed('kredit', fmt(r.kredit), 'n')}
+      ${ed('saldo', fmt(r.saldo), 'n')}
+      <td class="cek">${ckCell(r)}${notes}</td>
+      <td class="pg">${r.page}</td>
+      <td class="row-act"><button type="button" data-a="swap" title="Tukar debit ↔ kredit" aria-label="Tukar debit dan kredit">⇄</button><button type="button" data-a="add" title="Sisipkan baris di bawah" aria-label="Sisipkan baris">＋</button><button type="button" data-a="del" title="Hapus baris" aria-label="Hapus baris">✕</button></td>
+    </tr>`;
+  }
+
+  function tableHtml(doc) {
+    const isGL = doc.docType === 'gl';
+    const head = `<thead><tr><th>#</th><th>Tanggal</th><th>${isGL ? 'No. Bukti' : 'Ref / Cabang'}</th><th>Keterangan</th><th class="n">Debit</th><th class="n">Kredit</th><th class="n">Saldo</th><th>Cek</th><th>Hal</th><th></th></tr></thead>`;
+    let body = '';
+    let lastAcct = undefined;
+    const show = (r) => !state.onlyIssues || issue(r);
+    const T = doc.totals || {};
+    if (!isGL && T.opening != null) body += `<tr class="open"><td></td><td></td><td></td><td>SALDO AWAL${T.openingDerived ? ' (dihitung mundur)' : ''}</td><td></td><td></td><td class="n">${fmt(T.opening)}</td><td></td><td></td><td></td></tr>`;
+    doc.rows.forEach((r, i) => {
+      if (isGL && r.acct !== lastAcct) {
+        lastAcct = r.acct;
+        const a = r.acct || {};
+        const res = a.result || {};
+        body += `<tr class="acct"><td colspan="10">${esc(a.code || '')} ${esc(a.name || '')}<span class="acct-meta">saldo normal ${a.normal === 'K' ? 'kredit' : 'debit'} · saldo awal ${fmt(a.openingUsed)} · saldo akhir hitung ${fmt(res.closingCalc)}${res.issues && res.issues.length ? ' · ✕ ' + esc(res.issues.join('; ')) : ''}</span></td></tr>`;
+      }
+      if (show(r)) body += rowHtml(r, i, isGL);
+    });
+    if (!doc.rows.length) body = `<tr><td colspan="10" class="empty">Tidak ada transaksi yang terbaca. Coba pilih jenis dokumen/bank secara manual atau "Paksa OCR", lalu klik "Proses ulang".</td></tr>`;
+    const foot = `<tfoot><tr><td></td><td></td><td></td><td>TOTAL</td><td class="n">${fmt(T.sumD)}</td><td class="n">${fmt(T.sumK)}</td><td class="n">${isGL ? '' : fmt(T.lastSaldo)}</td><td colspan="3"></td></tr></tfoot>`;
+    return `<table class="tx">${head}<tbody>${body}</tbody>${foot}</table>`;
+  }
+
+  // ------------------------------------------------------------------ edit tabel
+  const docView = $('#docView');
+  docView.addEventListener('keydown', (e) => {
+    if (e.target.matches('td[contenteditable]') && e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+    if (e.target.matches('.check.link') && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.target.click(); }
+  });
+  docView.addEventListener('focusout', (e) => {
+    const td = e.target.closest && e.target.closest('td[contenteditable]');
+    if (!td) return;
+    const doc = activeDoc();
+    const tr = td.closest('tr');
+    const r = doc && doc.rows.find((x) => x.id === +tr.dataset.id);
+    if (!r) return;
+    const f = td.dataset.f;
+    const text = td.textContent.trim();
+    const old = f === 'date' ? fmtDate(r.date) : f === 'debit' || f === 'kredit' || f === 'saldo' ? fmt(r[f]) : r[f];
+    if (text === String(old == null ? '' : old)) return;
+    if (f === 'date') {
+      if (!text) r.date = null;
+      else {
+        const d = E.parseDateText(text, r.date && r.date.y);
+        if (!d) { toast('Format tanggal tidak dikenali. Contoh: 05/11/2025'); td.textContent = old; return; }
+        r.date = d;
+      }
+    } else if (f === 'debit' || f === 'kredit' || f === 'saldo') {
+      if (!text) r[f] = null;
+      else {
+        const p = E.parseAmount(text.replace(/\s/g, ''));
+        if (!p) { toast('Angka tidak valid. Contoh: 1.250.000,00'); td.textContent = old; return; }
+        r[f] = f === 'saldo' ? p.value : Math.abs(p.value) || null;
+      }
+      delete r.sus[f]; delete r.sus.side;
+      r.notes = r.notes.filter((n) => !/dikoreksi|ditebak/.test(n));
+    } else {
+      r[f] = text;
+    }
+    afterEdit(doc, false);
+  });
+
+  docView.addEventListener('click', (e) => {
+    const chk = e.target.closest('.check.link');
+    if (chk) { jumpTo(chk.dataset.rows.split(',').map(Number)); return; }
+    const btn = e.target.closest('.row-act button');
+    if (!btn) return;
+    const doc = activeDoc();
+    const id = +btn.closest('tr').dataset.id;
+    const idx = doc.rows.findIndex((x) => x.id === id);
+    if (idx < 0) return;
+    const r = doc.rows[idx];
+    if (btn.dataset.a === 'swap') { [r.debit, r.kredit] = [r.kredit, r.debit]; const s = r.sus; [s.debit, s.kredit] = [s.kredit, s.debit]; delete r.sus.side; r.notes = r.notes.filter((n) => !/ditebak/.test(n)); }
+    else if (btn.dataset.a === 'del') { doc.rows.splice(idx, 1); toast('Baris dihapus.'); }
+    else if (btn.dataset.a === 'add') {
+      const n = { id: newRowId++, page: r.page, file: r.file, date: r.date ? { ...r.date } : null, ref: '', desc: '', debit: null, kredit: null, saldo: null, sus: {}, notes: [], kind: 'tx', acct: r.acct, account: r.account, accountName: r.accountName };
+      doc.rows.splice(idx + 1, 0, n);
+    }
+    afterEdit(doc, true);
+  });
+
+  function afterEdit(doc, full) {
+    E.check(doc);
+    state.continuity = E.checkContinuity(doneDocs());
+    renderBanner(); renderContinuity(); renderTabs(); renderFiles();
+    if (full) { const wrap = $('#tblWrap'); const st = wrap.scrollTop; renderDoc(); $('#tblWrap').scrollTop = st; return; }
+    $('#checkList').innerHTML = doc.checks.map(checkLi).join('');
+    // perbarui kolom cek & warna baris tanpa render ulang (agar fokus sel tidak hilang)
+    for (const r of doc.rows) {
+      const tr = $(`#tblWrap tr[data-id="${r.id}"]`);
+      if (!tr) continue;
+      tr.classList.toggle('err', r.status === 'err');
+      const cek = tr.querySelector('td.cek');
+      const notes = r.notes && r.notes.length ? `<span class="note">${esc(r.notes.join(' · '))}</span>` : '';
+      cek.innerHTML = ckCell(r) + notes;
+      for (const f of ['debit', 'kredit', 'saldo']) {
+        const td = tr.querySelector(`td[data-f="${f}"]`);
+        if (td && document.activeElement !== td) { td.classList.toggle('sus', !!r.sus[f]); td.textContent = fmt(r[f]); }
+      }
+    }
+    const foot = $('#tblWrap tfoot');
+    if (foot) foot.outerHTML = tableHtml(doc).match(/<tfoot>[\s\S]*<\/tfoot>/)[0];
+  }
+
+  function jumpTo(ids) {
+    const wrap = $('#tblWrap');
+    if (state.onlyIssues === false && ids.length > 1) { /* tetap tampil semua */ }
+    let tr = null;
+    for (const id of ids) { tr = wrap.querySelector(`tr[data-id="${id}"]`); if (tr) break; }
+    if (!tr) { state.onlyIssues = false; renderDoc(); tr = $('#tblWrap').querySelector(`tr[data-id="${ids[0]}"]`); }
+    if (!tr) return;
+    $('#tblWrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    for (const id of ids) { const t = $('#tblWrap').querySelector(`tr[data-id="${id}"]`); if (t) { t.classList.remove('flash'); void t.offsetWidth; t.classList.add('flash'); } }
+  }
+
+  // ------------------------------------------------------------------ unduh Excel
+  async function download(docs, continuity) {
+    try {
+      const buf = await X.build(docs, continuity);
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const d = docs[0];
+      const parts = ['ConPEx', d.docType === 'gl' ? 'BukuBesar' : d.bank, d.meta.accountNo, docs.length > 1 ? `${docs.length}file` : d.meta.period].filter(Boolean);
+      const name = parts.join('_').replace(/[^\w\-]+/g, '-').replace(/-+/g, '-').slice(0, 90) + '.xlsx';
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob); a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 20000);
+      toast(`Excel disimpan: ${name}`);
+    } catch (e) {
+      console.error(e);
+      toast('Gagal membuat Excel: ' + e.message);
+    }
+  }
+
+  // akses untuk pengujian otomatis
+  window.__conpex = { state, addBuffer };
+})();
