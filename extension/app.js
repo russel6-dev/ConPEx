@@ -176,8 +176,10 @@
           return { str: x.str, x: tx[4], y: tx[5], w: x.width, h: Math.hypot(tx[2], tx[3]) };
         });
         const words = E.wordsFromTextItems(items);
+        // halaman dianggap hasil scan bila hampir tidak punya teks digital
+        const textChars = words.reduce((n, w) => n + w.t.length, 0);
         const digitWords = words.filter((w) => /\d/.test(w.t)).length;
-        if (o.ocr === 'force' || digitWords < 6) {
+        if (o.ocr === 'force' || textChars < 40 || (digitWords < 3 && textChars < 200)) {
           if (location.protocol === 'file:') throw new Friendly(`Halaman ${p} adalah hasil scan, dan scan hanya bisa dibaca bila ConPEx dipasang sebagai extension.`, 'Jangan klik dua kali app.html. Ikuti petunjuk merah di atas halaman ini.');
           ocrCount++;
           it.msg = `OCR (scan) halaman ${p} dari ${n}${ocrCount === 1 ? ' — pertama kali butuh beberapa detik' : ''}`; renderFiles();
@@ -294,7 +296,7 @@
     const sumK = docs.reduce((s, d) => s + (d.totals.sumK || 0), 0);
     const nErr = docs.reduce((s, d) => s + d.rows.filter((r) => r.status === 'err').length, 0);
     const nSus = docs.reduce((s, d) => s + d.rows.filter((r) => Object.keys(r.sus).length).length, 0);
-    const title = st === 'ok' ? 'Semua angka cocok' : st === 'warn' ? `Angka cocok, ${nSus} baris perlu dicek manual` : `Ada selisih${nErr ? ` di ${nErr} baris` : ''}. Periksa tanda merah.`;
+    const title = st === 'ok' ? 'Semua angka cocok' : st === 'warn' ? (nSus ? `Angka cocok, ${nSus} baris perlu dicek manual` : 'Angka cocok, ada catatan yang perlu dicek (lihat Hasil pengecekan)') : `Ada selisih${nErr ? ` di ${nErr} baris` : ''}. Periksa tanda merah.`;
     const b = $('#banner');
     b.className = 'banner ' + st;
     b.innerHTML = `

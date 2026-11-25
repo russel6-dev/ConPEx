@@ -656,6 +656,8 @@
         }
         return;
       }
+      const note = (key, a) => { if (a && (a.sus || a.raw)) { summary._raw = summary._raw || {}; summary._raw[key] = { raw: a.raw, sus: a.sus }; } };
+      if (lab === 'opening') note('opening', amts[amts.length - 1]); else if (lab === 'closing') note('closing', amts[amts.length - 1]); else if (lab === 'debit' || lab === 'credit') note(lab, amts[0]);
       if (lab === 'opening') { if (summary.opening == null) summary.opening = amts[amts.length - 1].v; }
       else if (lab === 'closing') summary.closing = amts[amts.length - 1].v;
       else if (lab === 'debit') { summary.debit = Math.abs(vals[0]); if (count != null) summary.debitCount = count; }
@@ -976,13 +978,20 @@
       checks.push({ level: 'warn', title: 'Saldo per baris tidak bisa dicek', detail: 'PDF tidak mencantumkan saldo per transaksi.' });
     }
 
-    const cmp = (title, printed, calc, unit) => {
+    const closingOk = S.closing != null && closingCalc != null && close(S.closing, closingCalc);
+    const cmp = (title, printed, calc, unit, key) => {
       if (printed == null) return;
       const ok = unit ? printed === calc : close(printed, calc);
+      const raw = S._raw && key && S._raw[key];
+      if (!ok && !unit && closingOk && !bad.length && digitEditDistance(printed, calc) <= 1) {
+        // saldo akhir & semua baris cocok, angka ringkasan hanya beda 1 digit -> hampir pasti salah baca OCR
+        checks.push({ level: 'warn', title: `${title}: kemungkinan salah baca OCR`, detail: `Di PDF terbaca ${raw && raw.raw ? `"${raw.raw}"` : fmt(printed)}, hasil hitung ${fmt(calc)}. Hasil hitung konsisten dengan saldo akhir, jadi angka ringkasan di PDF kemungkinan salah baca. Cocokkan dengan dokumen aslinya.` });
+        return;
+      }
       checks.push({ level: ok ? 'ok' : 'error', title: `${title}: ${ok ? 'cocok' : 'SELISIH'}`, detail: `Menurut PDF ${unit ? printed : fmt(printed)} · hasil hitung ${unit ? calc : fmt(calc)}${ok ? '' : ` · selisih ${unit ? printed - calc : fmt(round2(printed - calc))}`}` });
     };
-    cmp('Total mutasi debit', S.debit, sumD);
-    cmp('Total mutasi kredit', S.credit, sumK);
+    cmp('Total mutasi debit', S.debit, sumD, false, 'debit');
+    cmp('Total mutasi kredit', S.credit, sumK, false, 'credit');
     cmp('Jumlah transaksi debit', S.debitCount, nD, true);
     cmp('Jumlah transaksi kredit', S.creditCount, nK, true);
     if (S.closing != null) cmp('Saldo akhir (awal + kredit − debit)', S.closing, closingCalc);
@@ -1098,6 +1107,16 @@
       const next = rows.slice(i + 1).find((x) => x.saldo != null);
       if ((next && next.status === 'ok') || (!next && closingPrinted != null && close(closingPrinted, r.saldo))) delete r.sus.saldo;
     }
+  }
+
+  /** Jarak edit (sisip/hapus/ganti) antar deret digit dua angka. */
+  function digitEditDistance(a, b) {
+    const x = Math.abs(a).toFixed(2).replace('.', ''), y = Math.abs(b).toFixed(2).replace('.', '');
+    const dp = Array.from({ length: x.length + 1 }, (_, i) => [i, ...Array(y.length).fill(0)]);
+    for (let j = 1; j <= y.length; j++) dp[0][j] = j;
+    for (let i = 1; i <= x.length; i++) for (let j = 1; j <= y.length; j++)
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (x[i - 1] === y[j - 1] ? 0 : 1));
+    return dp[x.length][y.length];
   }
 
   /** true bila dua angka hanya berbeda satu digit (pola khas salah baca OCR). */

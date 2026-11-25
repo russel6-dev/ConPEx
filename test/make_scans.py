@@ -29,5 +29,5 @@ def scan(name, dpi=200, angle=0.4):
         print(out)
 
 if __name__ == "__main__":
-    for n in (sys.argv[1:] or ["bca_nov2025", "buku_besar_okt2025", "mandiri_sep2025", "mandiri_mcm_2022"]):
+    for n in (sys.argv[1:] or ["bca_nov2025", "buku_besar_okt2025", "mandiri_sep2025", "mandiri_mcm_2022", "bca_estatement_des2024"]):
         scan(n)

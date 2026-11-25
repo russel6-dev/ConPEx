@@ -121,6 +121,107 @@ def make_bca(path, broken=False):
     c.save()
 
 
+# ------------------------------------------------------------------ BCA e-statement asli: keterangan 2 kolom, saldo hanya di akhir hari
+def make_bca_estatement(path):
+    rnd = random.Random(77)
+    opening = 5_262_431.01
+    names = ["BUDI SANTOSO", "SITI AMINAH", "CV MAJU JAYA", "ANDI PRATAMA"]
+    txs, bal = [], opening
+    day = 3
+    for i in range(34):
+        credit = rnd.random() < 0.35
+        amt = float(rnd.choice([196000000, 3008000, 2472000, 1500000, 750000, 125000, 2900, 50000]))
+        if not credit and bal - amt < 0:
+            credit = True
+        bal = round(bal + amt if credit else bal - amt, 2)
+        txs.append(dict(day=day, credit=credit, amt=amt, bal=bal, name=rnd.choice(names), kind=rnd.choice(["trsf", "trsf", "biaya", "kartu"])))
+        if rnd.random() < 0.45:
+            day = min(31, day + rnd.choice([1, 1, 2]))
+    # saldo hanya dicetak di transaksi terakhir pada tanggal tsb
+    for i, t in enumerate(txs):
+        t["show_bal"] = i == len(txs) - 1 or txs[i + 1]["day"] != t["day"]
+    c = canvas.Canvas(path, pagesize=A4)
+    W, H = A4
+
+    def page_header(pn, total):
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(40, H - 45, "REKENING TAHAPAN")
+        c.setFont("Helvetica", 8)
+        for k, (l, v) in enumerate([("NO. REKENING", "0123456789"), ("HALAMAN", f"{pn} / {total}"), ("PERIODE", "DESEMBER 2024"), ("MATA UANG", "IDR")]):
+            c.drawString(340, H - 60 - k * 11, l)
+            c.drawString(420, H - 60 - k * 11, ": " + v)
+        c.drawString(40, H - 60, "KCU CONTOH")
+        c.drawString(40, H - 71, "PT CONTOH SENTOSA")
+        c.roundRect(30, H - 150, W - 60, 40, 6)
+        c.setFont("Helvetica-Bold", 6)
+        c.drawString(36, H - 118, "CATATAN:")
+        c.setFont("Helvetica", 5.5)
+        c.drawString(36, H - 128, "Apabila nasabah tidak melakukan sanggahan atas Laporan Mutasi Rekening ini sampai dengan akhir bulan berikutnya,")
+        c.drawString(36, H - 136, "nasabah dianggap telah menyetujui segala data yang tercantum pada Laporan Mutasi Rekening ini.")
+        y = H - 170
+        c.roundRect(30, y - 5, W - 60, 16, 5)
+        c.setFont("Helvetica-Bold", 7)
+        c.drawCentredString(62, y, "TANGGAL")
+        c.drawCentredString(220, y, "KETERANGAN")
+        c.drawCentredString(352, y, "CBG")
+        c.drawCentredString(430, y, "MUTASI")
+        c.drawCentredString(520, y, "SALDO")
+        c.setFont("Helvetica", 7)
+        return y - 20
+
+    per = 12
+    chunks = [txs[i:i + per] for i in range(0, len(txs), per)]
+    for pi, chunk in enumerate(chunks):
+        y = page_header(pi + 1, len(chunks))
+        if pi == 0:
+            c.drawString(50, y, "01/12")
+            c.drawString(95, y, "SALDO AWAL")
+            c.drawRightString(565, y, us(opening))
+            y -= 16
+        for t in chunk:
+            d = f"{t['day']:02d}/12"
+            c.drawString(50, y, d)
+            if t["kind"] == "trsf":
+                c.drawString(95, y, "TRSF E-BANKING " + ("CR" if t["credit"] else "DB"))
+                c.drawString(95, y - 9, f"TANGGAL :{t['day'] - 1:02d}/12")
+                c.drawString(200, y, f"{t['day'] - 1:02d}12/FTSCY/WS95051")
+                c.drawString(200, y - 9, f"{t['amt']:.2f}")
+                extra = ["Gaj Nov 2024 -PAT", t["name"]] if not t["credit"] else [t["name"]]
+                for k, e in enumerate(extra):
+                    c.drawString(200, y - 18 - 9 * k, e)
+                lines = 2 + len(extra)
+            elif t["kind"] == "biaya":
+                c.drawString(95, y, "BIAYA ADM")
+                lines = 1
+            else:
+                c.drawString(95, y, "KARTU DEBIT")
+                c.drawString(200, y, "TOKO CONTOH 01")
+                c.drawString(200, y - 9, f"{t['amt']:.2f}")
+                lines = 2
+            c.drawRightString(445, y, us(t["amt"]) + ("" if t["credit"] else " DB"))
+            if t["show_bal"]:
+                c.drawRightString(565, y, us(t["bal"]))
+            y -= 9 * lines + 7
+        if pi < len(chunks) - 1:
+            c.setFont("Helvetica", 6)
+            c.drawString(40, 40, "Bersambung ke Halaman berikut")
+            c.setFont("Helvetica", 7)
+        else:
+            cr = [t for t in txs if t["credit"]]
+            db = [t for t in txs if not t["credit"]]
+            y -= 6
+            for lab, val, cnt in [("SALDO AWAL", opening, None), ("MUTASI CR", sum(t["amt"] for t in cr), len(cr)),
+                                  ("MUTASI DB", sum(t["amt"] for t in db), len(db)), ("SALDO AKHIR", txs[-1]["bal"], None)]:
+                c.drawString(330, y, lab)
+                c.drawString(400, y, ":")
+                c.drawRightString(500, y, us(val))
+                if cnt is not None:
+                    c.drawRightString(545, y, str(cnt))
+                y -= 11
+        c.showPage()
+    c.save()
+
+
 # ------------------------------------------------------------------ BRI
 def make_bri(path):
     opening = 8_450_000.00
@@ -385,6 +486,7 @@ if __name__ == "__main__":
     make_bca(os.path.join(OUT, "bca_nov2025.pdf"))
     make_bca(os.path.join(OUT, "bca_salah_cetak.pdf"), broken=True)
     make_bri(os.path.join(OUT, "bri_okt2025.pdf"))
+    make_bca_estatement(os.path.join(OUT, "bca_estatement_des2024.pdf"))
     make_mandiri(os.path.join(OUT, "mandiri_sep2025.pdf"))
     make_mandiri_mcm(os.path.join(OUT, "mandiri_mcm_2022.pdf"))
     make_bni(os.path.join(OUT, "bni_agu2025.pdf"))
