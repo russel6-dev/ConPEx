@@ -136,7 +136,7 @@
     ocrProgress = onProg;
     const { data } = await worker.recognize(canvas);
     ocrProgress = null;
-    return { words: E.wordsFromOcr(data.words || []), width: canvas.width };
+    return { words: E.wordsFromOcr(data), width: canvas.width };
   }
 
   // ------------------------------------------------------------------ proses
@@ -388,7 +388,8 @@
   const issue = (r) => r.status === 'err' || Object.keys(r.sus).length > 0;
 
   function ckCell(r) {
-    if (r.status === 'err') return `<span class="ck err" title="Saldo seharusnya ${fmt(r.calc)}">Selisih ${fmt(r.diff)}</span>`;
+    if (r.status === 'err') return `<span class="ck err" title="Saldo seharusnya ${fmt(r.calc)}">Selisih ${fmt(r.diff)}</span>`
+      + (r.suggest ? `<button type="button" class="suggest" data-a="suggest" title="Saldo di PDF kemungkinan salah baca 1 angka">Pakai ${fmt(r.suggest.value)}?</button>` : '');
     if (r.status === 'ok' && r.saldo != null) return '<span class="ck ok">✓ cocok</span>';
     return '<span class="ck na">–</span>';
   }
@@ -475,6 +476,18 @@
   docView.addEventListener('click', (e) => {
     const chk = e.target.closest('.check.link');
     if (chk) { jumpTo(chk.dataset.rows.split(',').map(Number)); return; }
+    const sug = e.target.closest('button.suggest');
+    if (sug) {
+      const doc = activeDoc();
+      const r = doc.rows.find((x) => x.id === +sug.closest('tr').dataset.id);
+      if (r && r.suggest) {
+        r[r.suggest.field] = r.suggest.value; r.sus[r.suggest.field] = true;
+        r.notes = r.notes.filter((n) => !/dikoreksi/.test(n));
+        r.notes.push('Saldo dikoreksi dari saran (OCR salah baca 1 angka) — cocokkan dengan PDF');
+        afterEdit(doc, true); toast('Saldo diganti. Sel tetap kuning sebagai pengingat untuk dicocokkan dengan PDF.');
+      }
+      return;
+    }
     const btn = e.target.closest('.row-act button');
     if (!btn) return;
     const doc = activeDoc();

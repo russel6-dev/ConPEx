@@ -225,6 +225,48 @@ def make_mandiri(path):
     c.save()
 
 
+# ------------------------------------------------------------------ Mandiri korporat (MCM): tanggal di kolom ke-4, kode C/D terpisah
+def make_mandiri_mcm(path):
+    txs = gen_tx(40, 55, 0.0)
+    c = canvas.Canvas(path, pagesize=A4)
+    W, H = A4
+    c.setFillColorRGB(0.1, 0.17, 0.3)
+    c.rect(0, H - 80, W, 80, fill=1, stroke=0)
+    c.setFillColorRGB(1, 1, 1)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(30, H - 40, "rekening koran")
+    c.setFont("Helvetica-Oblique", 11)
+    c.drawString(30, H - 55, "account statement")
+    c.setFont("Helvetica-Bold", 22)
+    c.drawString(W - 140, H - 50, "mandiri")
+    c.setFillColorRGB(0, 0, 0)
+    cols = [(18, "Cifno"), (68, "Nama"), (150, "No Rekening"), (200, "Tanggal Transaksi"), (258, "Jam Transaksi"),
+            (300, "Ket. Kode Transaksi"), (370, "Jenis Trans"), (410, "Remark")]
+    y = H - 100
+    c.setFont("Helvetica-Bold", 5)
+    for x, s in cols:
+        c.drawString(x, y, s)
+    c.drawRightString(530, y, "Amount")
+    c.drawRightString(580, y, "Saldo")
+    c.setFont("Helvetica", 5)
+    y -= 9
+    bal = 0.0
+    for i, t in enumerate(txs):
+        c.drawString(18, y, "19005220000")
+        c.drawString(68, y, "PT CONTOH JAYA ABADI")
+        c.drawString(150, y, "1180000123456")
+        c.drawString(200, y, f"2022-{3 + i * 9 // 40:02d}-{1 + (i * 7) % 28:02d}")
+        c.drawString(258, y, "00:00:00" if i % 3 else "10:07:05")
+        c.drawString(300, y, t["desc"][0][:20])
+        c.drawString(375, y, "C" if t["credit"] else "D")
+        if len(t["desc"]) > 1:
+            c.drawString(410, y, t["desc"][1][:30])
+        c.drawRightString(530, y, us(t["amt"]))
+        c.drawRightString(580, y, us(t["bal"]))
+        y -= 9.4
+    c.save()
+
+
 # ------------------------------------------------------------------ BNI
 def make_bni(path):
     opening = 51_000_000.00
@@ -344,6 +386,7 @@ if __name__ == "__main__":
     make_bca(os.path.join(OUT, "bca_salah_cetak.pdf"), broken=True)
     make_bri(os.path.join(OUT, "bri_okt2025.pdf"))
     make_mandiri(os.path.join(OUT, "mandiri_sep2025.pdf"))
+    make_mandiri_mcm(os.path.join(OUT, "mandiri_mcm_2022.pdf"))
     make_bni(os.path.join(OUT, "bni_agu2025.pdf"))
     make_gl(os.path.join(OUT, "buku_besar_okt2025.pdf"))
     print("ok")

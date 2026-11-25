@@ -6,6 +6,8 @@ HERE = os.path.dirname(__file__)
 SAMPLES = os.path.join(HERE, "samples")
 
 def scan(name, dpi=200, angle=0.4):
+    if "mcm" in name:
+        dpi, angle = 300, 0.7  # font kecil & lebih miring, seperti hasil mesin fotokopi
     src = os.path.join(SAMPLES, name + ".pdf")
     with tempfile.TemporaryDirectory() as td:
         subprocess.run(["pdftoppm", "-r", str(dpi), "-gray", "-png", src, os.path.join(td, "p")], check=True)
@@ -27,5 +29,5 @@ def scan(name, dpi=200, angle=0.4):
         print(out)
 
 if __name__ == "__main__":
-    for n in (sys.argv[1:] or ["bca_nov2025", "buku_besar_okt2025", "mandiri_sep2025"]):
+    for n in (sys.argv[1:] or ["bca_nov2025", "buku_besar_okt2025", "mandiri_sep2025", "mandiri_mcm_2022"]):
         scan(n)

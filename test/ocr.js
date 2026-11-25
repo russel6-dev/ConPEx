@@ -16,7 +16,7 @@ const { imageSize } = (() => { try { return require('image-size'); } catch { ret
   for (let i = 0; i < files.length; i++) {
     const t0 = Date.now();
     const { data } = await worker.recognize(path.join(dir, files[i]));
-    const words = E.wordsFromOcr(data.words);
+    const words = E.wordsFromOcr(data);
     const width = Math.max(...data.words.map((w) => w.bbox.x1)) + 50;
     pages.push({ page: i + 1, words, width, ocr: true });
     console.error(`page ${i + 1}: ${data.words.length} words, ${Date.now() - t0} ms`);

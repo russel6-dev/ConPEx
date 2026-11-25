@@ -30,7 +30,7 @@
 
   const BANKS = [
     ['BCA', /\bBCA\b|bank central asia|klikbca|tahapan/i],
-    ['Mandiri', /bank\s*mandiri|\bmandiri\b|livin/i],
+    ['Mandiri', /bank\s*mandiri|\bmandiri\b|livin|mcm\s*inhouse/i],
     ['BRI', /\bBRI\b|bank rakyat indonesia|britama|brimo/i],
     ['BNI', /\bBNI\b|bank negara indonesia|taplus/i],
     ['BSI', /\bBSI\b|bank syariah indonesia/i],
@@ -72,11 +72,19 @@
     return out;
   }
 
-  /** words dari Tesseract: [{text, bbox:{x0,y0,x1,y1}, confidence}] */
-  function wordsFromOcr(ocrWords) {
-    return ocrWords
-      .filter((w) => w.text && w.text.trim())
-      .map((w) => ({ t: w.text.trim(), x0: w.bbox.x0, x1: w.bbox.x1, y0: w.bbox.y0, y1: w.bbox.y1, conf: w.confidence, ocr: true }));
+  /**
+   * Kata dari Tesseract. Bisa berupa array words [{text,bbox,confidence}] atau objek data
+   * Tesseract ({lines:[{words}]}). Dengan data lines, pengelompokan baris dari OCR dipakai
+   * (lebih tahan terhadap scan yang miring).
+   */
+  function wordsFromOcr(src) {
+    const conv = (w, ln) => ({ t: w.text.trim(), x0: w.bbox.x0, x1: w.bbox.x1, y0: w.bbox.y0, y1: w.bbox.y1, conf: w.confidence, ocr: true, ln });
+    if (src && !Array.isArray(src) && Array.isArray(src.lines) && src.lines.length) {
+      const out = [];
+      src.lines.forEach((line, i) => (line.words || []).forEach((w) => { if (w.text && w.text.trim()) out.push(conv(w, i)); }));
+      return out;
+    }
+    return (Array.isArray(src) ? src : (src && src.words) || []).filter((w) => w.text && w.text.trim()).map((w) => conv(w, w.ln));
   }
 
   /** Perbaiki salah baca OCR yang umum pada angka (O->0, l->1, S->5, ...). */
@@ -112,7 +120,25 @@
     }).filter((w) => w.t).sort((a, b) => a.cy - b.cy);
     const lines = [];
     let cur = null;
-    for (const w of ws) {
+    if (ws.length && ws.every((w) => w.ln != null)) {
+      // pakai baris hasil OCR; tapi pecah bila satu "baris" OCR ternyata berisi 2 baris yang bertumpuk
+      const by = new Map();
+      for (const w of ws) { if (!by.has(w.ln)) by.set(w.ln, []); by.get(w.ln).push(w); }
+      for (const [, g] of by) {
+        g.sort((a, b) => a.x0 - b.x0);
+        // satu "baris" OCR kadang berisi 2 baris cetak yang berdekatan: pisahkan menurut tinggi kata,
+        // dengan membandingkan ke kata terdekat di sebelah kiri (aman untuk scan miring)
+        const subs = [];
+        for (const w of g) {
+          let best = null, bd = Infinity;
+          for (const sb of subs) { const d = Math.abs(w.cy - sb.last.cy); if (d < bd) { bd = d; best = sb; } }
+          if (best && bd <= mh * 0.6) { best.words.push(w); best.last = w; }
+          else subs.push({ words: [w], last: w });
+        }
+        for (const sb of subs) lines.push({ page, cy: sb.words[0].cy, words: sb.words, h: mh, pageW });
+      }
+      lines.sort((a, b) => a.cy - b.cy);
+    } else for (const w of ws) {
       if (cur && Math.abs(w.cy - cur.cy) <= mh * 0.45) {
         cur.words.push(w);
         cur.cy = (cur.cy * (cur.words.length - 1) + w.cy) / cur.words.length;
@@ -461,18 +487,35 @@
     let start = 0;
     let d = matchDate(W, 0);
     if (!d && W.length > 1 && /^\d{1,4}\.?$/.test(W[0].t)) { d = matchDate(W, 1); if (d) start = 1; }
+    let midDate = false, dateFixed = false;
+    if (!d && ctx.ddmm && W[0] && W[0].ocr && W.length > 2) {
+      // OCR sering menghilangkan "/" pada tanggal dd/mm: "21/11" -> "2111" atau "21711"
+      const m = W[0].t.match(/^(\d{2})[71l|]?(\d{2})$/);
+      if (m && validDate(+m[1], +m[2]) && W.slice(1).some((w) => isMoneyWord(w.t)) && ctx.months && ctx.months.has(+m[2])) {
+        d = { d: +m[1], m: +m[2], y: null, n: 1 }; dateFixed = true;
+      }
+    }
+    if (!d) {
+      // tanggal tidak di awal: cari di beberapa kata pertama, asal masih di paruh kiri halaman
+      // dan setelahnya ada angka uang (kolom identitas spt Cifno/Nama/No Rek di depan dilewati)
+      for (let i = 1; i < Math.min(W.length - 1, 12); i++) {
+        if (W[i].x0 > L.pageW * 0.6) break;
+        const dd = matchDate(W, i);
+        if (dd && dd.y && W.slice(i + dd.n).some((w) => isMoneyWord(w.t))) { d = dd; start = i; midDate = true; break; }
+      }
+    }
     if (d) {
       const w0 = W[start];
       let ok = true;
       if (header) {
         const dateCols = header.labels.filter((l) => l.g === 'date');
-        if (dateCols.length) ok = w0.x0 < dateCols[dateCols.length - 1].x1 + L.h * 4;
+        if (dateCols.length) ok = w0.x0 < dateCols[dateCols.length - 1].x1 + L.h * 4 || midDate;
         else ok = w0.x0 < L.pageW * 0.45;
-      } else ok = w0.x0 < L.pageW * 0.45;
-      if (ok) { out.date = d; out.dateWords = start + d.n; }
+      } else ok = w0.x0 < L.pageW * (midDate ? 0.6 : 0.45);
+      if (ok) { out.date = d; out.dateWords = start + d.n; out.midDate = midDate; out.dateFixed = dateFixed; out.pre = midDate ? W.slice(0, start).map((w) => w.t) : null; }
     }
     const firstIdx = out.date ? out.dateWords : 0;
-    let lastAmt = null;
+    let lastAmt = null, pendingFlag = null;
     for (let i = firstIdx; i < W.length; i++) {
       const w = W[i];
       const t = w.t;
@@ -500,6 +543,18 @@
         out.amounts.push(lastAmt);
         continue;
       }
+      if (L.flagX != null && out.date && !lastAmt && Math.abs(w.x0 - L.flagX) < L.h * 1.2 && t.length <= 4 && !isMoneyWord(t)) {
+        // kode C/D di kolomnya; OCR kadang membacanya jadi "(cd", "Cc", "et", "€"
+        const f = /^[(\[{]?[cCkK€]/.test(t) ? 'C' : /^[(\[{]?[dD]/.test(t) ? 'D' : null;
+        if (f && !pendingFlag) pendingFlag = f;
+        continue;
+      }
+      if (w.ocr && !lastAmt && (/^[^\p{L}\p{N}]+$/u.test(t) || (t.length <= 3 && w.conf < 45) || (t.length <= 2 && /^[^A-Za-z]+$/.test(t) && w.conf < 70))) continue; // bercak/watermark
+      if (w.ocr && lastAmt && (/^[^\p{L}\p{N}]+$/u.test(t) || (t.length <= 3 && w.conf < 45 && !/^(db|cr|dr|d|k|c)$/i.test(t)))) continue;
+      if (!lastAmt && /^\(?(C|D|K)\)?$/.test(t) && out.date && (!txtCol || txtCol.g === 'flag' || txtCol.g === 'desc' || txtCol.g === 'date')) {
+        // kolom "Jenis Trans" (C/D) yang letaknya sebelum angka
+        if (!pendingFlag) { pendingFlag = /^\(?(C|K|CR)\)?$/.test(t) ? 'C' : 'D'; continue; }
+      }
       if (/^(db|cr|dr|d|k|c|debet|debit|kredit|credit)$/i.test(t) && (lastAmt || (txtCol && txtCol.g === 'flag'))) {
         const target = out.amounts.slice().reverse().find((a) => a.col === 'amount') || lastAmt;
         if (target && (txtCol && txtCol.g === 'flag' || (lastAmt && w.x0 - lastAmt.x1 < L.h * 2.5))) {
@@ -513,6 +568,13 @@
       }
       out.desc.push(w);
     }
+    if (pendingFlag && out.amounts.length) {
+      const tgt = out.amounts.find((x) => x.col === 'amount') || (out.amounts.some((x) => x.col) ? null : out.amounts.slice().sort((p, q) => p.x0 - q.x0)[0]);
+      if (tgt && !tgt.flag) tgt.flag = pendingFlag;
+    } else if (pendingFlag && !out.amounts.length) {
+      out.desc.push({ t: pendingFlag === 'C' ? 'C' : 'D' }); // bukan kode arah ternyata; kembalikan ke keterangan
+    }
+    out.pendingFlag = pendingFlag;
     const firstAmtIdx = out.amounts.length ? out.amounts[0].wi : W.length;
     out.preText = W.slice(firstIdx, firstAmtIdx).map((w) => w.t).join(' ');
     return out;
@@ -529,12 +591,40 @@
   function parse(pages, opts = {}) {
     const lines = [];
     for (const p of pages) lines.push(...linesFromWords(p.words, p.page, p.width, p.ocr));
+    // kolom kode arah (C/D) yang berdiri sendiri: cari posisinya per halaman
+    const flagCols = new Map();
+    for (const l of lines) {
+      const W = l.words;
+      const di = W.findIndex((w, i) => i < 12 && matchDate(W, i));
+      if (di < 0) continue;
+      for (let i = di + 1; i < W.length; i++) if (/^(C|D|K)$/.test(W[i].t) && (W[i].conf == null || W[i].conf >= 75)) {
+        if (!flagCols.has(l.page)) flagCols.set(l.page, []);
+        flagCols.get(l.page).push(W[i].x0);
+        break;
+      }
+    }
+    for (const l of lines) { const xs = flagCols.get(l.page); if (xs && xs.length >= 3) l.flagX = medianOf(xs, null); }
     const text = lines.map((l) => l.text).join('\n');
     const docType = opts.docType && opts.docType !== 'auto' ? opts.docType : detectDocType(text);
     const bank = docType === 'bank' ? (opts.bank && opts.bank !== 'auto' ? opts.bank : lines.length ? detectBank(lines) : 'Lainnya') : '';
     const meta = extractMeta(lines);
     const yc = yearContext(meta, lines);
     const ctx = { docType, bank, yc };
+    // format tanggal dominan & bulan-bulan yang muncul (untuk memulihkan tanggal yang rusak di OCR)
+    {
+      let dm = 0, other = 0;
+      const months = new Set();
+      for (const l of lines) {
+        const t = l.words[0] && l.words[0].t;
+        if (!t) continue;
+        const dd = matchDate(l.words, 0);
+        if (!dd) continue;
+        months.add(dd.m);
+        if (/^\d{1,2}\/\d{1,2}$/.test(t)) dm++; else other++;
+      }
+      ctx.ddmm = dm >= 3 && dm > other;
+      ctx.months = months;
+    }
 
     const rows = [];
     const summary = {}; // bank: opening, closing, debit, credit, debitCount, creditCount
@@ -589,6 +679,8 @@
         sus: {}, notes: [], kind: 'tx',
       };
       if (dateOverride) r.notes.push('Tanggal disalin dari baris sebelumnya');
+      if (cls.pre) r._pre = cls.pre.join(' ');
+      if (cls.dateFixed) r.notes.push(`Tanggal dibaca OCR sebagai "${L.words[0].t}", diperbaiki jadi ${String(d.d).padStart(2, '0')}/${String(d.m).padStart(2, '0')}`);
       if (docType === 'gl') { const a = ensureAcct(); r.account = a.code; r.accountName = a.name; r.acct = a; }
       return r;
     };
@@ -621,7 +713,7 @@
       // label ringkasan
       const labs = findLabels(L.words);
       if (labs.length && (!cls.date || (labs[0].wi <= cls.dateWords + 1 && (labs[0].lab === 'opening' || labs[0].lab === 'closing')))) {
-        if (labs[0].wi <= (cls.date ? cls.dateWords + 1 : 1) || !cls.date) {
+        if (labs[0].wi <= (cls.date ? cls.dateWords + 1 : 1)) {
           // blok ringkasan sering di luar grid tabel: baca angkanya tanpa acuan kolom,
           // kecuali baris "Total" yang memang mengikuti kolom debit/kredit
           if (labs[0].lab !== 'total') { const free = classify(L, null, ctx); if (free.amounts.length) cls.amounts = free.amounts; }
@@ -696,6 +788,33 @@
       txRows.push(r);
     }
     if (docType === 'bank' && summary.opening == null && openingRow != null) summary.opening = openingRow;
+    // format korporat: kolom identitas (Cifno, Nama, No Rek) berulang di tiap baris -> isi meta
+    if (docType === 'bank' && (!meta.accountNo || !meta.name)) {
+      const pres = txRows.map((r) => r._pre).filter(Boolean);
+      if (pres.length >= 3) {
+        const toks = pres.map((p) => p.split(' '));
+        const nums = toks.flat().filter((t) => /^\d{10,16}$/.test(t));
+        const count = (arr) => arr.reduce((m, t) => m.set(t, (m.get(t) || 0) + 1), new Map());
+        const top = (m) => [...m.entries()].sort((a, b) => b[1] - a[1])[0];
+        const tn = top(count(nums.filter((t) => t.length >= 10)));
+        if (!meta.accountNo && tn && tn[1] >= pres.length * 0.6) {
+          // nomor rekening biasanya angka terpanjang/terakhir sebelum tanggal
+          const cands = [...count(nums).entries()].filter(([, c]) => c >= pres.length * 0.6).map(([t]) => t);
+          meta.accountNo = cands.sort((a, b) => b.length - a.length || toks[0].lastIndexOf(b) - toks[0].lastIndexOf(a))[0];
+        }
+        if (!meta.name) {
+          const names = count(toks.map((t) => t.filter((x) => /[A-Za-z]/.test(x)).join(' ')).filter(Boolean));
+          const tn2 = top(names);
+          if (tn2 && tn2[1] >= pres.length * 0.4) meta.name = tn2[0];
+        }
+      }
+    }
+    for (const r of txRows) delete r._pre;
+    if (!meta.period) {
+      const ds = txRows.filter((r) => r.date).map((r) => r.date);
+      const f = (d) => `${String(d.d).padStart(2, '0')}/${String(d.m).padStart(2, '0')}/${d.y}`;
+      if (ds.length) meta.period = `${f(ds[0])} s/d ${f(ds[ds.length - 1])}`;
+    }
 
     const doc = {
       fileName: opts.fileName || '', docType, bank, meta, rows: txRows, summary,
@@ -824,9 +943,11 @@
       const r = rows[i];
       const exp = running == null ? null : round2(running + (r.kredit || 0) - (r.debit || 0));
       r.calc = exp;
+      r.suggest = null;
       if (r.saldo != null && exp != null) {
         r.diff = round2(r.saldo - exp);
         r.status = Math.abs(r.diff) < EPS ? 'ok' : 'err';
+        if (r.status === 'err' && oneDigitApart(r.saldo, exp)) r.suggest = { field: 'saldo', value: exp };
         checked++;
         if (r.status === 'err') bad.push(r);
         running = r.saldo;
@@ -835,6 +956,7 @@
         running = exp;
       }
     }
+    verifyByArithmetic(rows, S.closing);
     const sumD = round2(rows.reduce((s, r) => s + (r.debit || 0), 0));
     const sumK = round2(rows.reduce((s, r) => s + (r.kredit || 0), 0));
     const nD = rows.filter((r) => r.debit).length;
@@ -958,6 +1080,33 @@
     doc.checks = checks;
     doc.status = worst(checks);
     return checks;
+  }
+
+  /**
+   * Angka yang ditandai "kurang yakin" tapi terbukti benar lewat hitungan saldo tidak perlu dicek lagi:
+   * - debit/kredit terbukti bila baris itu cocok (saldo sebelumnya ± mutasi = saldo tercetak);
+   * - saldo terbukti bila baris berikutnya yang bersaldo juga cocok (atau = saldo akhir tercetak).
+   * Angka yang dikoreksi otomatis tetap ditandai agar transparan.
+   */
+  function verifyByArithmetic(rows, closingPrinted) {
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r.sus || r.status !== 'ok' || r.saldo == null) continue;
+      if (r.notes.some((n) => /dikoreksi/.test(n))) continue;
+      delete r.sus.debit; delete r.sus.kredit; delete r.sus.side;
+      r.notes = r.notes.filter((n) => !/ditebak/.test(n));
+      const next = rows.slice(i + 1).find((x) => x.saldo != null);
+      if ((next && next.status === 'ok') || (!next && closingPrinted != null && close(closingPrinted, r.saldo))) delete r.sus.saldo;
+    }
+  }
+
+  /** true bila dua angka hanya berbeda satu digit (pola khas salah baca OCR). */
+  function oneDigitApart(a, b) {
+    const x = Math.abs(a).toFixed(2), y = Math.abs(b).toFixed(2);
+    if (x.length !== y.length || Math.sign(a) !== Math.sign(b)) return false;
+    let n = 0;
+    for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) n++;
+    return n === 1;
   }
 
   function pushCommon(doc, checks) {
