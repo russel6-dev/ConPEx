@@ -222,6 +222,60 @@ def make_bca_estatement(path):
     c.save()
 
 
+# ------------------------------------------------------------------ rekening campuran (uji analisis uang masuk), Jan-Mar 2025
+def make_campuran(path):
+    rnd = random.Random(2025)
+    owner = "PT CONTOH SENTOSA"
+    masuk = [
+        ("TRSF E-BANKING CR INV 0231 PT MAJU JAYA", 12500000), ("BI-FAST CR BUDI SANTOSO PELUNASAN", 4750000),
+        ("QRIS SETTLEMENT MERCHANT 8812", 3215400), ("TOKOPEDIA PAYOUT 22031", 8900000), ("SHOPEE SETTLEMENT", 5120000),
+        ("SETORAN TUNAI CABANG SUDIRMAN", 6000000), ("TRF DR CV SINAR TERMIN 2", 25000000), ("KR OTOMATIS PT ANUGERAH", 15000000),
+        ("REFUND TOKOPEDIA ORDER 9912", 450000), ("RVSL TRF 0912", 1250000), ("PNGMBLN DANA SALAH TRF", 2000000),
+        ("retun perhitungan", 3500000), ("PENCAIRAN KREDIT KMK 2025", 150000000), ("SETORAN MODAL DIREKTUR", 50000000),
+        ("TRSF E-BANKING CR PT CONTOH SENTOSA", 20000000), ("PB DARI REK 0099", 7500000), ("MCM InhouseTrf KAS", 10000000),
+        ("TRSF E-BANKING CR 3011/FTSCY/WS95051", 2300000), ("PEMBAYRAN TAGIHAN 05 CV ABADI", 9800000), ("JS GIRO", 125000),
+    ]
+    keluar = ["BYR VIA E-BANKING PLN", "TRSF E-BANKING DB SUPPLIER", "BIAYA ADM", "PAJAK BUNGA", "TARIKAN ATM", "PEMBELIAN BAHAN"]
+    txs, bal = [], 35_000_000.0
+    for month in (1, 2, 3):
+        items = [(d, a, True) for d, a in rnd.sample(masuk, 11)] + [(rnd.choice(keluar), rnd.choice([250000, 1500000, 8000000, 12000000]), False) for _ in range(7)]
+        items.append(("BUNGA REKENING", round(rnd.uniform(80, 150) * 100) / 100 * 10, True))
+        rnd.shuffle(items)
+        for i, (d, a, cr) in enumerate(items):
+            if not cr and bal - a < 0:
+                continue
+            bal = round(bal + a if cr else bal - a, 2)
+            txs.append(dict(date=f"{1 + i * 27 // len(items):02d}/{month:02d}/25", desc=d, amt=a, credit=cr, bal=bal))
+    c = canvas.Canvas(path, pagesize=landscape(A4))
+    W, H = landscape(A4)
+
+    def head():
+        c.setFont("Helvetica-Bold", 12); c.drawString(40, H - 45, "LAPORAN TRANSAKSI FINANSIAL - BANK BRI")
+        c.setFont("Helvetica", 8)
+        c.drawString(40, H - 62, "Nama"); c.drawString(140, H - 62, ": " + owner)
+        c.drawString(40, H - 74, "No. Rekening"); c.drawString(140, H - 74, ": 0555-01-000777-30-2")
+        c.drawString(450, H - 62, "Periode Transaksi"); c.drawString(540, H - 62, ": 01/01/25 - 31/03/25")
+        y = H - 100
+        c.setFont("Helvetica-Bold", 8)
+        for x, t in [(40, "Tanggal Transaksi"), (150, "Uraian Transaksi")]:
+            c.drawString(x, y, t)
+        for x, t in [(560, "Debet"), (670, "Kredit"), (790, "Saldo")]:
+            c.drawRightString(x, y, t)
+        c.setFont("Helvetica", 8)
+        return y - 15
+    y = head()
+    for t in txs:
+        if y < 60:
+            c.showPage(); y = head()
+        c.drawString(40, y, t["date"])
+        c.drawString(150, y, t["desc"][:60])
+        c.drawRightString(560, y, us(0 if t["credit"] else t["amt"]))
+        c.drawRightString(670, y, us(t["amt"] if t["credit"] else 0))
+        c.drawRightString(790, y, us(t["bal"]))
+        y -= 13
+    c.save()
+
+
 # ------------------------------------------------------------------ BRI
 def make_bri(path):
     opening = 8_450_000.00
@@ -486,6 +540,7 @@ if __name__ == "__main__":
     make_bca(os.path.join(OUT, "bca_nov2025.pdf"))
     make_bca(os.path.join(OUT, "bca_salah_cetak.pdf"), broken=True)
     make_bri(os.path.join(OUT, "bri_okt2025.pdf"))
+    make_campuran(os.path.join(OUT, "campuran_q1_2025.pdf"))
     make_bca_estatement(os.path.join(OUT, "bca_estatement_des2024.pdf"))
     make_mandiri(os.path.join(OUT, "mandiri_sep2025.pdf"))
     make_mandiri_mcm(os.path.join(OUT, "mandiri_mcm_2022.pdf"))

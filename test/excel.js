@@ -4,6 +4,7 @@ const path = require('path');
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 const E = require('../extension/engine.js');
 const X = require('../extension/excel.js');
+const I = require('../extension/income.js');
 async function pagesFromPdf(file) {
   const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(fs.readFileSync(file)), isEvalSupported: false, verbosity: 0 }).promise;
   const pages = [];
@@ -18,6 +19,7 @@ async function pagesFromPdf(file) {
   const [out, ...files] = process.argv.slice(2);
   const docs = [];
   for (const f of files) docs.push(E.parse(await pagesFromPdf(f), { fileName: path.basename(f) }));
+  for (const d of docs) if (d.docType === 'bank') I.analyze(d);
   const buf = await X.build(docs, E.checkContinuity(docs));
   fs.writeFileSync(out, Buffer.from(buf));
   console.log('wrote', out, buf.byteLength);

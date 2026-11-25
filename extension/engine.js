@@ -389,7 +389,10 @@
 
   function detectBank(lines) {
     let best = null, bs = 0;
-    const head = lines.filter((l) => l.page === lines[0].page).slice(0, 18).map((l) => l.text).join('\n');
+    // kop dokumen: baris di halaman pertama sebelum baris pertama yang berisi nominal uang
+    const p1 = lines.filter((l) => l.page === lines[0].page);
+    const firstMoney = p1.findIndex((l) => l.words.some((w) => isMoneyWord(w.t)));
+    const head = p1.slice(0, Math.min(18, firstMoney < 0 ? 18 : Math.max(firstMoney, 3))).map((l) => l.text).join('\n');
     const all = lines.map((l) => l.text).join('\n');
     for (const [name, re] of BANKS) {
       const g = new RegExp(re.source, 'gi');
@@ -808,6 +811,26 @@
           const names = count(toks.map((t) => t.filter((x) => /[A-Za-z]/.test(x)).join(' ')).filter(Boolean));
           const tn2 = top(names);
           if (tn2 && tn2[1] >= pres.length * 0.4) meta.name = tn2[0];
+        }
+      }
+    }
+    // bersihkan teks kolom identitas (Cifno/Nama/No Rek) yang terbawa ke keterangan
+    {
+      const pres = txRows.map((r) => r._pre).filter(Boolean);
+      if (pres.length >= 3) {
+        const cnt = new Map();
+        for (const p of pres) for (const t of p.split(' ')) cnt.set(t, (cnt.get(t) || 0) + 1);
+        const idToks = new Set([...cnt.entries()].filter(([t, c]) => c >= pres.length * 0.6 && t.length >= 2).map(([t]) => t));
+        if (idToks.size) for (const r of txRows) {
+          const ws = r.desc.split(' ');
+          // buang deret >= 2 token identitas berurutan (mis. "19005220971 SURYA PERSADA INTIM")
+          const out = [];
+          for (let i = 0; i < ws.length;) {
+            let j = i;
+            while (j < ws.length && idToks.has(ws[j])) j++;
+            if (j - i >= 2) i = j; else { out.push(ws[i]); i++; }
+          }
+          r.desc = out.join(' ');
         }
       }
     }

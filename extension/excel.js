@@ -81,6 +81,14 @@
       ['Saldo (PDF)', 18], ['Saldo Hitung', 18], ['Selisih', 13], ['Status', 11], ['Hal.', 6],
     ];
     if (multi) cols.push(['File', 26]);
+    // kolom analisis uang masuk (bila sudah dianalisis)
+    const withInc = docs.some((d) => d.rows.some((x) => x.inc));
+    const INC = {};
+    if (withInc) {
+      for (const [key, name, w] of [['kat', 'Kategori uang masuk', 27], ['jenis', 'Jenis', 30], ['conf', 'Keyakinan', 11], ['alasan', 'Alasan', 46], ['pihak', 'Pihak (perkiraan)', 24], ['bulan', 'Bulan', 9]]) {
+        cols.push([name, w]); INC[key] = colLetter(cols.length);
+      }
+    }
     cols.forEach(([, w], i) => (ws.getColumn(i + 1).width = w));
     const hr = ws.getRow(6);
     hr.values = cols.map((c) => c[0]);
@@ -107,7 +115,9 @@
           f(`IF(G${r}="","",G${r}-H${r})`, x.diff == null ? '' : x.diff),
           f(`IF(G${r}="","-",IF(ABS(G${r}-H${r})<0.005,"OK","SELISIH"))`, x.saldo == null ? '-' : x.status === 'err' ? 'SELISIH' : 'OK'),
           x.page, ...(multi ? [doc.fileName] : []),
+          ...(withInc ? (x.inc ? [x.inc.label, x.inc.jenis, x.inc.conf, x.inc.reason + (x.inc.manual ? ' (dipilih manual)' : ''), x.inc.party || '', monthKey(x.date)] : ['', '', '', '', '', '']) : []),
         ];
+        if (withInc && x.inc) R.getCell(INC.kat).dataValidation = { type: 'list', allowBlank: true, showErrorMessage: true, errorTitle: 'Kategori', error: 'Pilih salah satu kategori dari daftar.', formulae: [CAT_LIST] };
         if (n % 2 === 0) R.eachCell({ includeEmpty: true }, (c, i) => { if (i <= cols.length) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.band } }; });
         R.eachCell({ includeEmpty: true }, (c, i) => { if (i <= cols.length) c.border = border; });
         const note = x.notes && x.notes.length ? x.notes.join(' · ') : undefined;
@@ -129,6 +139,7 @@
     ws.getColumn('J').alignment = { horizontal: 'center' };
     ws.autoFilter = { from: { row: 6, column: 1 }, to: { row: lastData, column: cols.length } };
     statusRules(ws, `A7:${String.fromCharCode(64 + cols.length)}${lastData}`, 'J', 7);
+    if (withInc) catColors(ws, `${INC.kat}7:${INC.kat}${lastData}`, INC.kat, 7);
 
     // --- Rekonsiliasi
     const rs = wb.addWorksheet('Rekonsiliasi');
@@ -189,7 +200,137 @@
       }
       statusCellRules(rs, `E${s0}:E${y - 1}`);
     }
+    if (withInc) {
+      const map = new Map();
+      for (const b of blocks) b.doc.rows.forEach((x, i) => map.set(b.first + i, x));
+      rowAt = (row) => map.get(row);
+      incomeSheets(wb, docs, INC, 7, lastData);
+    }
   }
+
+  // ------------------------------------------------------------ analisis uang masuk
+  const CATS = ['Indikasi penghasilan usaha', 'Penghasilan bunga / bagi hasil', 'Bukan penghasilan', 'Perlu dicek'];
+  const CAT_LIST = '"' + CATS.join(',') + '"';
+  const CAT_COLOR = { 'Indikasi penghasilan usaha': 'FFDDF0E3', 'Penghasilan bunga / bagi hasil': 'FFE3EDF8', 'Bukan penghasilan': 'FFECEFEF', 'Perlu dicek': 'FFFFF1B8' };
+  const colLetter = (n) => { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+  const monthKey = (d) => (d ? `${d.y}-${String(d.m).padStart(2, '0')}` : '');
+  const MONTHS_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+  const monthLabel = (k) => { const [y, m] = k.split('-'); return m ? `${MONTHS_ID[+m - 1]} ${y}` : k; };
+
+  function catColors(ws, ref, col, firstRow) {
+    ws.addConditionalFormatting({
+      ref,
+      rules: CATS.map((c, i) => ({ type: 'expression', priority: 10 + i, formulae: [`$${col}${firstRow}="${c}"`], style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: CAT_COLOR[c] } } } })),
+    });
+  }
+
+  function incomeSheets(wb, docs, INC, firstData, lastData) {
+    const K = `Transaksi!$F$${firstData}:$F$${lastData}`;
+    const KAT = `Transaksi!$${INC.kat}$${firstData}:$${INC.kat}$${lastData}`;
+    const BLN = `Transaksi!$${INC.bulan}$${firstData}:$${INC.bulan}$${lastData}`;
+    const PIH = `Transaksi!$${INC.pihak}$${firstData}:$${INC.pihak}$${lastData}`;
+    const CONF = `Transaksi!$${INC.conf}$${firstData}:$${INC.conf}$${lastData}`;
+    const credits = [];
+    for (const d of docs) for (const x of d.rows) if (x.kredit && x.inc) credits.push(x);
+    const sumBy = (fn) => Math.round(credits.filter(fn).reduce((s, x) => s + x.kredit, 0) * 100) / 100;
+    const disclaimer = 'Kategori adalah INDIKASI otomatis dari keterangan bank, bukan kesimpulan pajak. Ganti kategori di sheet Transaksi (kolom "Kategori uang masuk", ada pilihan dropdown); semua rekap di sini ikut berubah.';
+
+    // --- 1. Rekap bulanan (ekualisasi)
+    const ws = wb.addWorksheet('Uang Masuk - Bulanan', { views: [{ state: 'frozen', ySplit: 5 }] });
+    titleBlock(ws, ['Rekap Uang Masuk per Bulan (untuk ekualisasi)', disclaimer, 'Isi kolom "Peredaran bruto SPT/PPN" dengan angka dari SPT/SPT Masa PPN untuk melihat selisihnya.']);
+    ws.getCell('A2').alignment = { wrapText: true }; ws.getRow(2).height = 30;
+    const hdr = ['Bulan', 'Kunci bulan', 'Total uang masuk', 'Indikasi penghasilan usaha', 'Penghasilan bunga / bagi hasil', 'Bukan penghasilan', 'Perlu dicek', 'Peredaran bruto SPT/PPN (isi sendiri)', 'Selisih: usaha − SPT', 'Selisih bila "perlu dicek" = penghasilan'];
+    [12, 10, 19, 21, 19, 19, 17, 22, 19, 22].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+    ws.getRow(5).values = hdr; styleHeader(ws.getRow(5)); ws.getRow(5).height = 44;
+    const months = [...new Set(credits.map((x) => monthKey(x.date)).filter(Boolean))].sort();
+    let y = 6;
+    for (const m of months) {
+      const inM = (x) => monthKey(x.date) === m;
+      ws.getRow(y).values = [
+        monthLabel(m), m,
+        f(`SUMIFS(${K},${BLN},$B${y})`, sumBy(inM)),
+        ...CATS.map((c, i) => f(`SUMIFS(${K},${BLN},$B${y},${KAT},"${c}")`, sumBy((x) => inM(x) && x.inc.label === c))),
+        null,
+        f(`IF(H${y}="","",D${y}-H${y})`, ''),
+        f(`IF(H${y}="","",D${y}+G${y}-H${y})`, ''),
+      ];
+      ws.getCell(`H${y}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: C.sus } };
+      ws.getRow(y).eachCell({ includeEmpty: true }, (c, k) => { if (k <= hdr.length) c.border = border; });
+      y++;
+    }
+    const last = y - 1;
+    ws.getRow(y).values = ['TOTAL', '', ...['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'].map((c) => f(`SUM(${c}6:${c}${last})`))];
+    ws.getRow(y).eachCell({ includeEmpty: true }, (c) => { c.font = { bold: true }; c.border = { top: { style: 'medium', color: { argb: C.ink } } }; });
+    ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'].forEach((c) => (ws.getColumn(c).numFmt = NUM));
+    ws.getColumn('B').hidden = true;
+    for (const c of ['D']) ws.getColumn(c).font = { bold: true };
+
+    // --- 2. Rincian (persiapan pemeriksaan)
+    const wr = wb.addWorksheet('Uang Masuk - Rincian', { views: [{ state: 'frozen', ySplit: 4 }] });
+    titleBlock(wr, ['Rincian Uang Masuk (untuk pemeriksaan)', 'Kolom Penjelasan & Dokumen pendukung diisi sendiri. Kategori mengikuti sheet Transaksi.']);
+    const rh = ['Tanggal', 'Keterangan', 'Nominal', 'Kategori', 'Jenis', 'Keyakinan', 'Alasan', 'Pihak (perkiraan)', 'Penjelasan WP', 'Dokumen pendukung'];
+    [12, 46, 18, 26, 28, 11, 40, 22, 32, 24].forEach((w, i) => (wr.getColumn(i + 1).width = w));
+    wr.getRow(4).values = rh; styleHeader(wr.getRow(4));
+    let z = 5;
+    for (let row = firstData; row <= lastData; row++) {
+      const x = rowAt(row);
+      if (!x || !x.kredit || !x.inc) continue;
+      wr.getRow(z).values = [
+        f(`Transaksi!B${row}`, toDate(x.date)), f(`Transaksi!C${row}`, x.desc), f(`Transaksi!F${row}`, x.kredit),
+        f(`Transaksi!${INC.kat}${row}`, x.inc.label), f(`Transaksi!${INC.jenis}${row}`, x.inc.jenis), f(`Transaksi!${INC.conf}${row}`, x.inc.conf),
+        f(`Transaksi!${INC.alasan}${row}`, x.inc.reason), f(`Transaksi!${INC.pihak}${row}`, x.inc.party || ''), '', '',
+      ];
+      for (const c of ['I', 'J']) wr.getCell(`${c}${z}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFBEA' } };
+      wr.getRow(z).eachCell({ includeEmpty: true }, (c, k) => { if (k <= rh.length) c.border = border; });
+      z++;
+    }
+    wr.getColumn('A').numFmt = DATE; wr.getColumn('C').numFmt = NUM;
+    wr.getColumn('B').alignment = { wrapText: true, vertical: 'top' }; wr.getColumn('G').alignment = { wrapText: true, vertical: 'top' };
+    if (z > 5) { wr.autoFilter = { from: { row: 4, column: 1 }, to: { row: z - 1, column: rh.length } }; catColors(wr, `D5:D${z - 1}`, 'D', 5); }
+    const totalRow = z;
+    wr.getRow(z).values = ['', 'TOTAL', f(`SUM(C5:C${z - 1})`)]; wr.getRow(z).font = { bold: true };
+
+    // --- 3. Ringkasan (analisis umum)
+    const wsum = wb.addWorksheet('Uang Masuk - Ringkasan');
+    titleBlock(wsum, ['Ringkasan Uang Masuk', disclaimer]);
+    wsum.getCell('A2').alignment = { wrapText: true }; wsum.getRow(2).height = 30;
+    [34, 16, 20, 12, 26].forEach((w, i) => (wsum.getColumn(i + 1).width = w));
+    wsum.getRow(4).values = ['Kategori', 'Jumlah transaksi', 'Total', '% dari uang masuk'];
+    styleHeader(wsum.getRow(4));
+    let q = 5;
+    const totalAll = sumBy(() => true);
+    for (const c of CATS) {
+      wsum.getRow(q).values = [c, f(`COUNTIFS(${KAT},"${c}")`, credits.filter((x) => x.inc.label === c).length), f(`SUMIFS(${K},${KAT},"${c}")`, sumBy((x) => x.inc.label === c)), f(`IF($C$9=0,0,C${q}/$C$9)`)];
+      wsum.getCell(`A${q}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CAT_COLOR[c] } };
+      q++;
+    }
+    wsum.getRow(q).values = ['Total uang masuk', f(`SUM(B5:B8)`, credits.length), f(`SUM(C5:C8)`, totalAll), f(`IF(C${q}=0,0,1)`)];
+    wsum.getRow(q).font = { bold: true };
+    for (let i = 5; i <= q; i++) wsum.getRow(i).eachCell({ includeEmpty: true }, (c, k) => { if (k <= 4) c.border = border; });
+    wsum.getColumn('C').numFmt = NUM; wsum.getColumn('D').numFmt = '0.0%';
+    wsum.addConditionalFormatting({ ref: 'C5:C8', rules: [{ type: 'dataBar', priority: 1, cfvo: [{ type: 'num', value: 0 }, { type: 'max' }], color: { argb: 'FF5FB3A9' } }] });
+    q += 2;
+    wsum.getCell(`A${q}`).value = 'Yang perlu diperhatikan'; wsum.getCell(`A${q}`).font = { bold: true, size: 12, color: { argb: C.ink } }; q++;
+    wsum.getRow(q).values = ['Transaksi "Perlu dicek"', f(`COUNTIFS(${KAT},"Perlu dicek")`), f(`SUMIFS(${K},${KAT},"Perlu dicek")`)]; q++;
+    wsum.getRow(q).values = ['Keyakinan rendah (semua kategori)', f(`COUNTIFS(${CONF},"rendah")`), f(`SUMIFS(${K},${CONF},"rendah")`)]; q++;
+    q += 1;
+    wsum.getCell(`A${q}`).value = 'Pihak pengirim terbesar (perkiraan dari keterangan)'; wsum.getCell(`A${q}`).font = { bold: true, size: 12, color: { argb: C.ink } }; q++;
+    wsum.getRow(q).values = ['Pihak (perkiraan)', 'Jumlah transaksi', 'Total', '% dari uang masuk', 'Kategori terbanyak']; styleHeader(wsum.getRow(q)); q++;
+    const parties = new Map();
+    for (const x of credits) { const k = x.inc.party || ''; if (!k) continue; if (!parties.has(k)) parties.set(k, { t: 0, n: 0, cats: {} }); const p = parties.get(k); p.t += x.kredit; p.n++; p.cats[x.inc.label] = (p.cats[x.inc.label] || 0) + x.kredit; }
+    const top = [...parties.entries()].sort((a, b) => b[1].t - a[1].t).slice(0, 10);
+    const p0 = q;
+    for (const [name, p] of top) {
+      wsum.getRow(q).values = [name, f(`COUNTIFS(${PIH},A${q})`, p.n), f(`SUMIFS(${K},${PIH},A${q})`, Math.round(p.t * 100) / 100), f(`IF($C$9=0,0,C${q}/$C$9)`), Object.entries(p.cats).sort((a, b) => b[1] - a[1])[0][0]];
+      wsum.getRow(q).eachCell({ includeEmpty: true }, (c, k) => { if (k <= 5) c.border = border; });
+      q++;
+    }
+    if (q > p0) catColors(wsum, `E${p0}:E${q - 1}`, 'E', p0);
+    q++;
+    wsum.getCell(`A${q}`).value = 'Catatan: pihak pengirim ditebak dari kata-kata di akhir keterangan bank, bisa tidak tepat.';
+    wsum.getCell(`A${q}`).font = { italic: true, size: 9, color: { argb: 'FF4A5D60' } };
+  }
+  let rowAt = () => null;
 
   // ------------------------------------------------------------ buku besar
 
