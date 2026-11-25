@@ -11,6 +11,7 @@
   const extUrl = (p) => (window.chrome && chrome.runtime && chrome.runtime.getURL ? chrome.runtime.getURL(p) : new URL(p, location.href).href);
 
   pdfjsLib.GlobalWorkerOptions.workerSrc = extUrl('lib/pdf.worker.min.js');
+  try { $('#appVer').textContent = 'v' + chrome.runtime.getManifest().version; } catch (e) { /* dibuka di luar extension */ }
   // dibuka langsung dari folder (file://) dan bukan sebagai extension: OCR tidak bisa jalan
   if (location.protocol === 'file:') { $('#fileWarn').hidden = false; }
 

@@ -177,3 +177,21 @@ def segel_sheet(out):
 
 if __name__ == "__main__" and len(sys.argv) > 3 and sys.argv[3] == "segel":
     segel_sheet(OUT)
+
+
+def lencana(text="RR"):
+    """Ikon dokumen + Excel dengan lencana bulat merah di pojok kanan atas (ikon yang dipakai)."""
+    im = Image.new("RGBA", (S, S), (0, 0, 0, 0)); d = ImageDraw.Draw(im)
+    d.rounded_rectangle(R([16, 16, 496, 496]), radius=110 * k, fill=TEAL)
+    doc_grid(d)
+    d.ellipse(R([352, 40, 476, 164]), fill=(232, 93, 74, 255), outline=WHITE, width=12 * k)
+    f = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", (54 if len(text) > 1 else 64) * k)
+    text_c(d, 414 * k, 102 * k, text, f, WHITE)
+    return fin(im)
+
+
+if __name__ == "__main__" and len(sys.argv) > 3 and sys.argv[3] == "lencana":
+    v = lencana(sys.argv[4] if len(sys.argv) > 4 else "RR")
+    v.save(f"{OUT}/lencana.png")
+    for s_ in (16, 32, 48, 128):
+        v.resize((s_, s_), Image.LANCZOS).save(f"{OUT}/icon{s_}.png")

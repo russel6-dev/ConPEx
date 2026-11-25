@@ -31,12 +31,16 @@
     });
   }
 
+  const CREDIT = 'Crafted by RR · ConPEx';
   function titleBlock(ws, lines) {
     lines.forEach((t, i) => {
       const c = ws.getCell(i + 1, 1);
       c.value = t;
       c.font = i === 0 ? { bold: true, size: 14, color: { argb: C.ink } } : { size: 10, color: { argb: 'FF4A5D60' } };
     });
+    const cr = ws.getCell(lines.length + 1, 1);
+    cr.value = CREDIT;
+    cr.font = { italic: true, size: 9, color: { argb: 'FF1F5F5B' } };
   }
 
   function statusRules(ws, ref, col, firstRow) {
@@ -74,7 +78,7 @@
       `Rekening Koran${d0.bank ? ' — ' + d0.bank : ''}`,
       [d0.meta.accountNo && `No. Rekening: ${d0.meta.accountNo}`, d0.meta.name && `Nama: ${d0.meta.name}`].filter(Boolean).join('    ') || ' ',
       multi ? `Periode: ${docs.map((d) => d.meta.period).filter(Boolean).join(', ')}` : `Periode: ${d0.meta.period || '-'}`,
-      'Dibuat dengan ConPEx. Kolom Saldo Hitung, Selisih & Status berupa rumus — lihat juga sheet Rekonsiliasi.',
+      'Kolom Saldo Hitung, Selisih & Status berupa rumus — lihat juga sheet Rekonsiliasi.',
     ]);
     const cols = [
       ['No', 6], ['Tanggal', 12], ['Keterangan', 48], ['Ref / Cabang', 14], ['Debit', 17], ['Kredit', 17],
@@ -337,7 +341,7 @@
   function glSheets(wb, docs) {
     const ws = wb.addWorksheet('Buku Besar', { views: [{ state: 'frozen', ySplit: 6 }] });
     const multi = docs.length > 1;
-    titleBlock(ws, ['Buku Besar', `Periode: ${docs.map((d) => d.meta.period).filter(Boolean).join(', ') || '-'}`, ' ', 'Dibuat dengan ConPEx. Saldo Hitung memakai arah saldo normal tiap akun (lihat sheet Ringkasan Akun).']);
+    titleBlock(ws, ['Buku Besar', `Periode: ${docs.map((d) => d.meta.period).filter(Boolean).join(', ') || '-'}`, ' ', 'Saldo Hitung memakai arah saldo normal tiap akun (lihat sheet Ringkasan Akun).']);
     const cols = [['No. Akun', 11], ['Nama Akun', 24], ['Tanggal', 12], ['No. Bukti', 14], ['Keterangan', 40], ['Debit', 17], ['Kredit', 17], ['Saldo (PDF)', 18], ['Saldo Hitung', 18], ['Selisih', 13], ['Status', 11], ['Hal.', 6]];
     if (multi) cols.push(['File', 24]);
     cols.forEach(([, w], i) => (ws.getColumn(i + 1).width = w));
@@ -459,7 +463,7 @@
   /** opts: {income: true|false} — sertakan analisis uang masuk bila datanya ada. */
   async function build(docs, continuity, opts = {}) {
     const wb = new ExcelJS.Workbook();
-    wb.creator = 'ConPEx';
+    wb.creator = 'RR (ConPEx)';
     wb.created = new Date();
     wb.calcProperties = { fullCalcOnLoad: true };
     const banks = docs.filter((d) => d.docType === 'bank');
