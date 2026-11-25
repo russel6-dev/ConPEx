@@ -54,7 +54,7 @@ Karena pengecekannya berupa rumus, bila angka di Excel diubah, status cek ikut b
 ## Cara instal
 
 ### A. Dari file ZIP (untuk dibagikan ke teman)
-1. Unduh `ConPEx-v1.1.0.zip` dari halaman **Releases** repo ini, lalu ekstrak.
+1. Unduh `ConPEx-v1.1.1.zip` dari halaman **Releases** repo ini, lalu ekstrak.
 2. Buka `chrome://extensions` (Edge: `edge://extensions`).
 3. Nyalakan **Developer mode** (pojok kanan atas).
 4. Klik **Load unpacked**, lalu pilih folder hasil ekstrak (yang berisi `manifest.json`).
@@ -70,7 +70,7 @@ Belum dipublikasikan. Lihat bagian [Publikasi ke Chrome Web Store](#publikasi-ke
 2. Seret PDF ke kotak unggah (bisa beberapa file).
 3. Lihat **Hasil pengecekan**. Klik item merah/kuning untuk melompat ke baris yang bermasalah.
 4. Perbaiki sel bila perlu: klik sel untuk mengedit, ⇄ untuk menukar debit/kredit, ＋ untuk menyisip baris, ✕ untuk menghapus. Cek langsung dihitung ulang.
-5. Klik **Unduh Excel**.
+5. Klik **Unduh Excel**. Nama file otomatis: `ConPEx_Nama WP_Bank_No Rek_Masa.xlsx` (mis. `ConPEx_PT CONTOH_Mandiri_1180012788872_Mar-Des 2022.xlsx`). Nama WP, bank, dan no. rekening bisa diubah di panel atas sebelum mengunduh.
 
 Bila sedang membuka PDF di Chrome, klik ikon ConPEx atau klik-kanan link PDF lalu pilih **Ubah PDF ini ke Excel (ConPEx)**.
 

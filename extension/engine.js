@@ -611,6 +611,19 @@
     const docType = opts.docType && opts.docType !== 'auto' ? opts.docType : detectDocType(text);
     const bank = docType === 'bank' ? (opts.bank && opts.bank !== 'auto' ? opts.bank : lines.length ? detectBank(lines) : 'Lainnya') : '';
     const meta = extractMeta(lines);
+    // BCA mencetak nama nasabah tanpa label, di kop kiri (di bawah nama cabang KCU/KCP)
+    if (!meta.name && bank === 'BCA') {
+      const p1 = lines.filter((l) => l.page === (lines[0] && lines[0].page));
+      const stopAt = p1.findIndex((l) => detectHeader(l, null) || l.words.some((w) => isMoneyWord(w.t)));
+      const kop = p1.slice(0, stopAt < 0 ? 15 : stopAt);
+      const BAD = /REKENING|TAHAPAN|GIRO|XPRESI|KCU|KCP|CABANG|JL\b|JALAN|RT\b|RW\b|KEL\b|KEC\b|KOTA|KAB|CATATAN|HALAMAN|PERIODE|MATA UANG|NO\.|NOMOR|INDONESIA|BCA|LAPORAN|MUTASI|APABILA|NASABAH|BERHAK/i;
+      const cabIdx = kop.findIndex((l) => /\b(KCU|KCP|KCK|KANTOR CABANG)\b/i.test(l.text));
+      for (const l of kop.slice(cabIdx >= 0 ? cabIdx + 1 : 0)) {
+        const seg = l.segText.split(/\s{3,}/)[0].trim();
+        const left = l.words[0] && l.words[0].x0 < l.pageW * 0.4;
+        if (left && /^[A-Z][A-Z.,'&()\- ]{3,60}$/.test(seg) && seg.split(' ').length >= 2 && !BAD.test(seg) && !/\d/.test(seg)) { meta.name = seg; break; }
+      }
+    }
     const yc = yearContext(meta, lines);
     const ctx = { docType, bank, yc };
     // format tanggal dominan & bulan-bulan yang muncul (untuk memulihkan tanggal yang rusak di OCR)

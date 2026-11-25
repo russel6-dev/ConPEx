@@ -378,11 +378,11 @@
           <div class="meta">
             ${isGL ? '' : `<label>Bank<input id="m-bank" value="${esc(doc.bank)}"></label>`}
             ${isGL ? '' : `<label>No. rekening<input id="m-accountNo" value="${esc(doc.meta.accountNo)}"></label>`}
-            <label>${isGL ? 'Perusahaan / nama' : 'Nama'}<input id="m-name" value="${esc(doc.meta.name)}"></label>
+            <label>${isGL ? 'Nama WP / perusahaan' : 'Nama WP'}<input id="m-name" value="${esc(doc.meta.name)}"></label>
             <label>Periode<input id="m-period" value="${esc(doc.meta.period)}"></label>
           </div>
           <div class="doc-actions">
-            <span class="muted small">Jenis terdeteksi: <b>${isGL ? 'Buku besar' : 'Rekening koran'}</b> · ${doc.pageCount} halaman${doc.ocrPages ? ` (${doc.ocrPages} OCR)` : ''}</span>
+            <span class="muted small">Isian di atas dipakai untuk nama file Excel. Jenis terdeteksi: <b>${isGL ? 'Buku besar' : 'Rekening koran'}</b> · ${doc.pageCount} halaman${doc.ocrPages ? ` (${doc.ocrPages} OCR)` : ''}</span>
             ${doneDocs().length > 1 ? '<button id="btnXlsxOne" class="btn ghost small" type="button">Unduh Excel file ini saja</button>' : ''}
           </div>
         </div>
@@ -659,13 +659,40 @@
   }
 
   // ------------------------------------------------------------------ unduh Excel
+  // ------------------------------------------------------------------ nama file: ConPEx_Nama WP_Bank_No Rek_Masa.xlsx
+  const BLN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+  function masaLabel(docs) {
+    const ds = [];
+    for (const d of docs) for (const r of d.rows) if (r.date && r.date.y) ds.push(r.date.y * 100 + r.date.m);
+    if (!ds.length) return docs.map((d) => d.meta.period).filter(Boolean)[0] || '';
+    const a = Math.min(...ds), b = Math.max(...ds);
+    const ya = Math.floor(a / 100), ma = a % 100, yb = Math.floor(b / 100), mb = b % 100;
+    if (a === b) return `${BLN[ma - 1]} ${ya}`;                       // Nov 2025
+    if (ya === yb) return `${BLN[ma - 1]}-${BLN[mb - 1]} ${ya}`;     // Jan-Mar 2025
+    return `${BLN[ma - 1]} ${ya}-${BLN[mb - 1]} ${yb}`;              // Nov 2024-Feb 2025
+  }
+  function excelFileName(docs) {
+    const uniq = (arr) => [...new Set(arr.map((x) => (x || '').trim()).filter(Boolean))];
+    const names = uniq(docs.map((d) => d.meta.name));
+    const banks = uniq(docs.map((d) => (d.docType === 'gl' ? 'Buku Besar' : d.bank)));
+    const reks = uniq(docs.filter((d) => d.docType === 'bank').map((d) => d.meta.accountNo));
+    const parts = [
+      'ConPEx',
+      names.length === 1 ? names[0] : names.length > 1 ? 'Beberapa WP' : '',
+      banks.length === 1 ? banks[0] : banks.length > 1 ? 'Beberapa Bank' : '',
+      reks.length === 1 ? reks[0] : reks.length > 1 ? 'Beberapa Rek' : '',
+      masaLabel(docs),
+    ].filter(Boolean);
+    // buang karakter yang tidak boleh ada di nama file Windows/Mac
+    const clean = parts.map((p) => p.replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').replace(/\s+/g, ' ').trim());
+    return clean.join('_').slice(0, 150) + '.xlsx';
+  }
+
   async function download(docs, continuity) {
     try {
       const buf = await X.build(docs, continuity, { income: incOn() });
       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      const d = docs[0];
-      const parts = ['ConPEx', d.docType === 'gl' ? 'BukuBesar' : d.bank, d.meta.accountNo, docs.length > 1 ? `${docs.length}file` : d.meta.period].filter(Boolean);
-      const name = parts.join('_').replace(/[^\w\-]+/g, '-').replace(/-+/g, '-').slice(0, 90) + '.xlsx';
+      const name = excelFileName(docs);
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob); a.download = name;
       document.body.appendChild(a); a.click(); a.remove();
@@ -678,5 +705,5 @@
   }
 
   // akses untuk pengujian otomatis
-  window.__conpex = { state, addBuffer };
+  window.__conpex = { state, addBuffer, excelFileName };
 })();
