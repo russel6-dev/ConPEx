@@ -79,15 +79,15 @@ def fin(im):
     return im.resize((512, 512), Image.LANCZOS)
 
 
-def segel():
+def segel(ring=GOLD, fill=DEEP, inner=GOLD, text=WHITE):
     im = grad_bg(); d = ImageDraw.Draw(im); doc_grid(d, ox=22, oy=-6, s=0.94)
     c, r = (136, 376), 78
     shadow(im, R([c[0] - r, c[1] - r, c[0] + r, c[1] + r]), 0, off=7, blur=10, alpha=120, ellipse=True)
     d = ImageDraw.Draw(im)
-    d.ellipse(R([c[0] - r, c[1] - r, c[0] + r, c[1] + r]), fill=GOLD)
-    d.ellipse(R([c[0] - r + 10, c[1] - r + 10, c[0] + r - 10, c[1] + r - 10]), fill=DEEP)
-    d.ellipse(R([c[0] - r + 17, c[1] - r + 17, c[0] + r - 17, c[1] + r - 17]), outline=GOLD, width=3 * k)
-    text_c(d, c[0] * k, c[1] * k + 2 * k, "DAR", ImageFont.truetype(SERIF, 54 * k), WHITE)
+    d.ellipse(R([c[0] - r, c[1] - r, c[0] + r, c[1] + r]), fill=ring)
+    d.ellipse(R([c[0] - r + 10, c[1] - r + 10, c[0] + r - 10, c[1] + r - 10]), fill=fill)
+    d.ellipse(R([c[0] - r + 17, c[1] - r + 17, c[0] + r - 17, c[1] + r - 17]), outline=inner, width=3 * k)
+    text_c(d, c[0] * k, c[1] * k + 2 * k, "DAR", ImageFont.truetype(SERIF, 54 * k), text)
     return fin(clip_to_icon(im))
 
 
@@ -144,3 +144,36 @@ if __name__ == "__main__":
             dd.text((xx + s // 2, 425), f"{s}px", font=fs, fill=(91, 109, 112), anchor="mm"); xx += s + 48
     sheet.save(f"{OUT}/contoh_dar.png")
     print("ok")
+
+
+# pilihan warna untuk desain Segel
+SEGEL_COLORS = [
+    ("A · Merah marun + emas", dict(ring=GOLD, fill=(122, 28, 40, 255), inner=GOLD, text=WHITE), "Cap stempel klasik, kontras dgn hijau"),
+    ("B · Krem + hijau tua", dict(ring=GOLD, fill=(251, 246, 232, 255), inner=(31, 95, 91, 255), text=DEEP), "Terang, menyatu dgn kertas"),
+    ("C · Biru navy + emas", dict(ring=GOLD, fill=(23, 40, 82, 255), inner=GOLD, text=WHITE), "Formal, kesan perbankan"),
+    ("D · Emas penuh", dict(ring=(255, 255, 255, 255), fill=GOLD, inner=GOLD2, text=DEEP), "Medali emas, paling mencolok"),
+]
+
+
+def segel_sheet(out):
+    imgs = [(n, segel(**c), sub) for n, c, sub in SEGEL_COLORS]
+    W, H = 1260, 470
+    sheet = Image.new("RGB", (W, H), (244, 246, 245)); dd = ImageDraw.Draw(sheet)
+    fl = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 19)
+    fs = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
+    for i, (n, v, sub) in enumerate(imgs):
+        v.save(f"{out}/segel_{'ABCD'[i]}.png")
+        x = 20 + i * 310
+        dd.rounded_rectangle([x, 20, x + 290, 450], radius=16, fill=(255, 255, 255), outline=(217, 225, 223))
+        big = v.resize((220, 220), Image.LANCZOS); sheet.paste(big, (x + 35, 38), big)
+        dd.text((x + 145, 284), n, font=fl, fill=(21, 41, 46), anchor="mm")
+        dd.text((x + 145, 310), sub, font=fs, fill=(91, 109, 112), anchor="mm")
+        xx = x + 50
+        for s_ in (48, 32, 16):
+            sm = v.resize((s_, s_), Image.LANCZOS); sheet.paste(sm, (xx, 380 - s_ // 2), sm)
+            dd.text((xx + s_ // 2, 425), f"{s_}px", font=fs, fill=(91, 109, 112), anchor="mm"); xx += s_ + 48
+    sheet.save(f"{out}/contoh_segel_warna.png")
+
+
+if __name__ == "__main__" and len(sys.argv) > 3 and sys.argv[3] == "segel":
+    segel_sheet(OUT)
