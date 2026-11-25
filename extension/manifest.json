@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ConPEx — Rekening Koran & Buku Besar ke Excel",
   "short_name": "ConPEx",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Ubah PDF rekening koran & buku besar (digital maupun scan) jadi Excel rapi, lengkap dengan cek saldo & total. Diproses offline di komputer Anda.",
   "minimum_chrome_version": "110",
   "icons": {
