@@ -54,7 +54,7 @@ Karena pengecekannya berupa rumus, bila angka di Excel diubah, status cek ikut b
 ## Cara instal
 
 ### A. Dari file ZIP (untuk dibagikan ke teman)
-1. Unduh `ConPEx-v1.1.1.zip` dari halaman **Releases** repo ini, lalu ekstrak.
+1. Unduh `ConPEx-v1.1.2.zip` dari halaman **Releases** repo ini, lalu ekstrak.
 2. Buka `chrome://extensions` (Edge: `edge://extensions`).
 3. Nyalakan **Developer mode** (pojok kanan atas).
 4. Klik **Load unpacked**, lalu pilih folder hasil ekstrak (yang berisi `manifest.json`).
